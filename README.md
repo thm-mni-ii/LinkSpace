@@ -105,4 +105,4 @@
 ![](Images/GrabScript.png)
 
 - Achte darauf:  
-  - Der dem `Graphics Object` das entsrechende Objekt zugewiesen wurde.
+  - Das dem `Graphics Object` das entsrechende Objekt zugewiesen wurde.
