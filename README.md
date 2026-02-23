@@ -106,3 +106,49 @@
 
 - Achte darauf:  
   - Das dem `Graphics Object` das entsrechende Objekt zugewiesen wurde.
+
+# Steuerung – Meta Quest 3
+
+Dieses Projekt ist für die Nutzung mit der **Meta Quest 3** ausgelegt.  
+Die Eingaben sind fest auf die Controller-Belegung abgestimmt.
+
+---
+
+### Bewegung & Ansicht
+
+| Eingabe | Funktion |
+|--------|----------|
+Linker Joystick | Spielerbewegung (vorwärts, rückwärts, seitwärts) |
+Rechter Joystick links/rechts | Umschauen in festen 45°-Schritten (Snap Turn) |
+Rechter Joystick nach vorne drücken | Ray-Teleport |
+
+> Das Umschauen erfolgt bewusst ruckartig (Snap Turn), um Motion Sickness zu reduzieren.
+
+---
+
+### Portal-Interaktionen
+
+| Eingabe | Funktion |
+|--------|----------|
+A-Button | Portal platzieren |
+B-Button | Portal zerstören |
+Y-Button | Ausrichtung des Portals ändern |
+Rechter Trigger | Portal „linken“ (Verbindung festlegen) |
+Rechter Grip (Grab) | Portal greifen und verschieben |
+
+---
+
+### Objekt-Interaktionen
+
+| Eingabe | Funktion |
+|--------|----------|
+X-Button | Würfel spawnen |
+Trigger (bei greifbaren Objekten) | Objekte greifen / halten |
+
+---
+
+### Hinweise zur Nutzung
+
+- Portale können nach dem Platzieren weiterhin **verschoben** werden (Grip halten).
+- Der Ray-Teleport funktioniert unabhängig von den Portalen und dient zur normalen Fortbewegung.
+- Gespawnte Würfel besitzen Traveller-Logik und können durch Portale bewegt werden.
