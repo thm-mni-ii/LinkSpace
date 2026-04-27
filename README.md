@@ -1,7 +1,7 @@
 # How To: Portals Installieren
 
 ## 1. Neues Projekt anlegen
-- Wähle eine aktuelle Unity-Version. Version **6000.2.10f** ist getestet.  
+- Wähle eine aktuelle Unity-Version. Version **6000.3.5f** ist getestet.  
 - Wähle außerdem das **Universal 3D Template**.  
 - Alternativ kannst du auch ein bestehendes Projekt verwenden.  
 
@@ -9,22 +9,29 @@
 
 ---
 
-## 2. Benötigte Packages installieren
+## 2. XR Plugin Management
+
+- Öffne Edit → Project Settings → XR Plugin Management
+- Klicke "Install XR Plugin Management"
+- Aktiviere OpenXR als Plug-in Provider
+- Klicke "Fix All" unter "XR Plug-in Management" → "Project Validation"
+- Unter "XR Plug-in Management" → "OpenXR" → "Enabled Interaction Profiles", aktiviere "Oculus Touch Controller Profile"
+
+
+## 3. XR Interaction Toolkit
 1. Öffne den **Package Manager** unter `Window → Package Manager`.  
 
 ![](Images/PackageManager.png)
 
 2. Installiere die folgenden Packages:
-   - **OpenXR** – Version **1.15.1** ist getestet.  
-     ![](Images/openXr.png)
-   - **XR Interaction Toolkit** – Version **3.2.2** ist getestet.  
+   - **XR Interaction Toolkit** – Version **3.3.1** ist getestet.  
      ![](Images/XRToolkit.png)
    - **XR Toolkit Starter Assets** – importiere die Starter Assets.  
      ![](Images/starterAssests.png)
 
 ---
 
-## 3. Bestehende Validation Issues beheben
+## 4. Bestehende Validation Issues beheben
 - Gehe zu den **Project Settings → Project Validation** und behebe vorhandene Issues.  
 - Meist reicht ein Klick auf **"Fix All"**.  
 
@@ -32,7 +39,7 @@
 
 ---
 
-## 4. Portals Package importieren
+## 5. Portals Package importieren
 - Lade das `Portals.unitypackage` herunter und doppelklicke es zum Importieren.  
 - Importiere **alle Dateien**.  
 
@@ -40,18 +47,26 @@
 
 ---
 
-## 5. Überprüfen, ob die Layer korrekt angelegt wurden
+## 6. Überprüfen, ob die Layer korrekt angelegt wurden
 - Prüfe die **Layer Collision Matrix** unter `Physics → Settings`.  
 - Stelle sicher, dass der Layer **PortalScreen** enthalten ist und keine Kollision mit anderen Layern hat.  
 - Achtung: Manchmal wird die Layer-Matrix komplett überschrieben.  
-- Wenn kein Haken zwischen irgendwelchen Layern gesetzt ist, bitte korrigieren.  
-- Die Matrix sollte wie im Bild aussehen:  
+- Wenn kein Haken zwischen irgendwelchen Layern gesetzt ist, bitte korrigieren.
+- Wenn der Layer PortalScreen nicht existiert, lege ihn an unter `Tags and Layers`. Nutze dafür `User Layer 6`.
+- Die Matrix sollte am Ende wie im Bild aussehen:  
 
 ![](Images/LayerMatrix.png)
 
 ---
 
-## 6. Demo-Scene starten und testen
+## 7. Szene vorbereiten
+
+- Öffne `Assets/Scenes/SampleScene.unity`
+- Klicke auf das GameObject "Portal" und verlinke ein anderes Portal als `Linked Portal`
+
+---
+
+## 8. Demo-Scene starten und testen
 - Starte die **Demo Scene** und überprüfe, ob alles funktioniert.
 
 ---
