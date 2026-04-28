@@ -388,18 +388,48 @@ public class Portal : MonoBehaviour
     /// </summary>
     private void CreateViewTextures()
     {
-        if (isEndpoint) return;
+        if (isEndpoint || screen == null) return;
 
-        if (viewTextureLeft == null || viewTextureLeft.width != Screen.width || viewTextureLeft.height != Screen.height)
+        int width = XRSettings.eyeTextureWidth;
+        int height = XRSettings.eyeTextureHeight;
+
+        // Fallback, falls XR noch nicht aktiv ist
+        if (width <= 0 || height <= 0)
         {
-            if (viewTextureLeft != null) viewTextureLeft.Release();
-            viewTextureLeft = new RenderTexture(Screen.width, Screen.height, 24);
+            width = Screen.width;
+            height = Screen.height;
         }
 
-        if (viewTextureRight == null || viewTextureRight.width != Screen.width || viewTextureRight.height != Screen.height)
+        if (viewTextureLeft == null || viewTextureLeft.width != width || viewTextureLeft.height != height)
         {
-            if (viewTextureRight != null) viewTextureRight.Release();
-            viewTextureRight = new RenderTexture(Screen.width, Screen.height, 24);
+            if (viewTextureLeft != null)
+            {
+                viewTextureLeft.Release();
+                Destroy(viewTextureLeft);
+            }
+
+            viewTextureLeft = new RenderTexture(width, height, 24)
+            {
+                name = "Portal View Texture Left",
+                antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing)
+            };
+            viewTextureLeft.Create();
+        }
+
+        if (viewTextureRight == null || viewTextureRight.width != width || viewTextureRight.height != height)
+        {
+            if (viewTextureRight != null)
+            {
+                viewTextureRight.Release();
+                Destroy(viewTextureRight);
+            }
+
+            viewTextureRight = new RenderTexture(width, height, 24)
+            {
+                name = "Portal View Texture Right",
+                antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing)
+            };
+            viewTextureRight.Create();
         }
 
         screen.meshRenderer.material.SetTexture("_LeftEyeTex", viewTextureLeft);
