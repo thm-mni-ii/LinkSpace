@@ -23,12 +23,32 @@ public class PlayerSpatialTraveller : SpatialTraveller
 
     #region Overrides
 
+    private void Awake()
+    {
+        rb = GetComponent<Rigidbody>();
+        ResolveTeleportOrigin();
+    }
+
     /// <summary>
     /// Returns the position of the teleport origin instead of the transform.
     /// </summary>
     public override Vector3 GetPosition()
     {
-        return teleportOrigin.position;
+        ResolveTeleportOrigin();
+        return teleportOrigin != null ? teleportOrigin.position : base.GetPosition();
+    }
+
+    /// <summary>
+    /// Returns the world matrix of the point that should cross the spatialView.
+    /// </summary>
+    public Matrix4x4 GetTeleportOriginMatrix()
+    {
+        ResolveTeleportOrigin();
+
+        if (teleportOrigin == null)
+            return transform.localToWorldMatrix;
+
+        return Matrix4x4.TRS(teleportOrigin.position, teleportOrigin.rotation, Vector3.one);
     }
 
     /// <summary>
@@ -36,7 +56,28 @@ public class PlayerSpatialTraveller : SpatialTraveller
     /// </summary>
     public override void Teleport(Vector3 pos, Quaternion rot)
     {
-        base.Teleport(pos, rot);
+        ResolveTeleportOrigin();
+
+        CharacterController characterController = GetComponent<CharacterController>();
+        bool characterControllerWasEnabled = characterController != null && characterController.enabled;
+
+        if (characterControllerWasEnabled)
+            characterController.enabled = false;
+
+        if (teleportOrigin == null)
+        {
+            base.Teleport(pos, rot);
+        }
+        else
+        {
+            float yawDelta = Mathf.DeltaAngle(teleportOrigin.rotation.eulerAngles.y, rot.eulerAngles.y);
+            transform.RotateAround(teleportOrigin.position, Vector3.up, yawDelta);
+            transform.position += pos - teleportOrigin.position;
+            Physics.SyncTransforms();
+        }
+
+        if (characterControllerWasEnabled)
+            characterController.enabled = true;
 
         foreach (GrabSpatialTraveller traveller in grabbedTravellers)
         {
@@ -62,6 +103,16 @@ public class PlayerSpatialTraveller : SpatialTraveller
                 spatialView.OnTravellerEnterView(traveller);
             }
         }
+    }
+
+    #endregion
+
+    #region Private Methods
+
+    private void ResolveTeleportOrigin()
+    {
+        if (teleportOrigin == null && Camera.main != null)
+            teleportOrigin = Camera.main.transform;
     }
 
     #endregion

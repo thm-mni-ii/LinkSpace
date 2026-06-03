@@ -132,6 +132,7 @@ public class SpatialView : MonoBehaviour
 
     void FixedUpdate()
     {
+        TrackPlayerByTeleportOrigin();
         HandleTravellerTeleportation();
     }
 
@@ -297,7 +298,10 @@ public class SpatialView : MonoBehaviour
         {
             SpatialTraveller traveller = trackedTravellers[i];
             Transform travellerT = traveller.transform;
-            Matrix4x4 travellerMatrix = travellerT.localToWorldMatrix;
+            PlayerSpatialTraveller playerTraveller = traveller as PlayerSpatialTraveller;
+            Matrix4x4 travellerMatrix = playerTraveller != null
+                ? playerTraveller.GetTeleportOriginMatrix()
+                : travellerT.localToWorldMatrix;
             Matrix4x4 m = linkedView.transform.localToWorldMatrix * transform.worldToLocalMatrix * travellerMatrix;
 
             Vector3 localPos = transform.InverseTransformPoint(traveller.GetPosition());
@@ -311,7 +315,6 @@ public class SpatialView : MonoBehaviour
             int viewSideOld = Math.Sign(localPrevPos.z);
 
             GrabSpatialTraveller grabTraveller = traveller as GrabSpatialTraveller;
-            PlayerSpatialTraveller playerTraveller = traveller as PlayerSpatialTraveller;
 
             if (grabTraveller == null || (grabTraveller != null && !grabTraveller.IsGrabbed()))
             {
@@ -349,6 +352,44 @@ public class SpatialView : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Tracks the player by camera position so simulator/head movement can trigger travel without collider callbacks.
+    /// </summary>
+    private void TrackPlayerByTeleportOrigin()
+    {
+        if (linkedView == null || isEndpoint || !walkable || travelMode == ObjectTravelMode.None) return;
+        if (LinkSpaceManager.Instance == null || LinkSpaceManager.Instance.player == null) return;
+
+        PlayerSpatialTraveller playerTraveller = LinkSpaceManager.Instance.player;
+
+        if (trackedTravellers.Contains(playerTraveller)) return;
+        if (!IsPointInsideEnterCollider(playerTraveller.GetPosition())) return;
+
+        OnTravellerEnterView(playerTraveller);
+    }
+
+    /// <summary>
+    /// Checks whether a world-space point is inside the spatialView trigger volume.
+    /// </summary>
+    private bool IsPointInsideEnterCollider(Vector3 worldPoint)
+    {
+        BoxCollider box = enterCollider as BoxCollider;
+
+        if (box == null)
+            box = GetComponent<BoxCollider>();
+
+        if (box == null)
+            return false;
+
+        Vector3 localPoint = box.transform.InverseTransformPoint(worldPoint) - box.center;
+        Vector3 halfSize = box.size * 0.5f;
+        const float tolerance = 0.05f;
+
+        return Mathf.Abs(localPoint.x) <= halfSize.x + tolerance
+            && Mathf.Abs(localPoint.y) <= halfSize.y + tolerance
+            && Mathf.Abs(localPoint.z) <= halfSize.z + tolerance;
+    }
+
     #endregion
 
     #region Rendering
@@ -359,13 +400,17 @@ public class SpatialView : MonoBehaviour
     void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
     {
         if (isEndpoint) return;
+
+        if (playerCam == null)
+            playerCam = Camera.main;
+
         if (camera != playerCam) return;
-        RenderSpatialViewVR(camera);
+        RenderSpatialView(camera);
     }
     /// <summary>
-    /// Handles rendering of the spatialView in VR, including left and right eye textures.
+    /// Handles rendering of the spatialView for stereo XR and mono Game View cameras.
     /// </summary>
-    void RenderSpatialViewVR(Camera mainCam)
+    void RenderSpatialView(Camera mainCam)
     {
         CreateViewTextures();
 
@@ -376,13 +421,18 @@ public class SpatialView : MonoBehaviour
             return;
         }
 
-        if (!mainCam.stereoEnabled) return;
+        if (!mainCam.stereoEnabled)
+        {
+            RenderMono(viewTextureLeft, mainCam);
+            RenderMono(viewTextureRight, mainCam);
+            ResetViewCamera(mainCam);
+            return;
+        }
 
         RenderEye(Camera.StereoscopicEye.Left, viewTextureLeft, mainCam);
         RenderEye(Camera.StereoscopicEye.Right, viewTextureRight, mainCam);
 
-        viewCam.targetTexture = null;
-        viewCam.ResetProjectionMatrix();
+        ResetViewCamera(mainCam);
     }
     /// <summary>
     /// Creates or updates render textures for spatialView camera eyes.
@@ -397,8 +447,8 @@ public class SpatialView : MonoBehaviour
         // Fallback, falls XR noch nicht aktiv ist
         if (width <= 0 || height <= 0)
         {
-            width = Screen.width;
-            height = Screen.height;
+            width = Mathf.Max(1, Screen.width);
+            height = Mathf.Max(1, Screen.height);
         }
 
         if (viewTextureLeft == null || viewTextureLeft.width != width || viewTextureLeft.height != height)
@@ -460,27 +510,73 @@ public class SpatialView : MonoBehaviour
     /// </summary>
     private void RenderEye(Camera.StereoscopicEye eye, RenderTexture target, Camera mainCam)
     {
-        if (!linkedView) return;
+        if (!linkedView || target == null) return;
 
         Transform fromView = transform;
         Transform toView = linkedView.transform;
 
-        viewCam.targetTexture = target;
+        CopyCameraSettings(mainCam);
         viewCam.projectionMatrix = mainCam.GetStereoProjectionMatrix(eye);
+        viewCam.targetTexture = target;
 
         Vector3 eyeWorldPos = mainCam.GetStereoViewMatrix(eye).inverse.MultiplyPoint(Vector3.zero);
         Quaternion eyeWorldRot = mainCam.transform.rotation;
 
-        Vector3 localPos = fromView.InverseTransformPoint(eyeWorldPos);
-        Quaternion localRot = Quaternion.Inverse(fromView.rotation) * eyeWorldRot;
-
-        viewCam.transform.position = toView.TransformPoint(localPos);
-        viewCam.transform.rotation = toView.rotation * localRot;
+        PositionViewCamera(fromView, toView, eyeWorldPos, eyeWorldRot);
 
         SetLinkedViewVisible(false);
         SetNearClipPlaneVR(toView);
         viewCam.Render();
         SetLinkedViewVisible(true);
+    }
+    /// <summary>
+    /// Renders the spatialView from a regular non-XR camera.
+    /// </summary>
+    private void RenderMono(RenderTexture target, Camera mainCam)
+    {
+        if (!linkedView || target == null) return;
+
+        Transform fromView = transform;
+        Transform toView = linkedView.transform;
+
+        CopyCameraSettings(mainCam);
+        viewCam.projectionMatrix = mainCam.projectionMatrix;
+        viewCam.targetTexture = target;
+
+        PositionViewCamera(fromView, toView, mainCam.transform.position, mainCam.transform.rotation);
+
+        SetLinkedViewVisible(false);
+        SetNearClipPlaneVR(toView);
+        viewCam.Render();
+        SetLinkedViewVisible(true);
+    }
+    /// <summary>
+    /// Copies render settings that should match the player camera for portal renders.
+    /// </summary>
+    private void CopyCameraSettings(Camera source)
+    {
+        viewCam.CopyFrom(source);
+        viewCam.enabled = false;
+    }
+    /// <summary>
+    /// Positions the spatialView camera relative to the linked spatialView.
+    /// </summary>
+    private void PositionViewCamera(Transform fromView, Transform toView, Vector3 sourcePosition, Quaternion sourceRotation)
+    {
+        Vector3 localPos = fromView.InverseTransformPoint(sourcePosition);
+        Quaternion localRot = Quaternion.Inverse(fromView.rotation) * sourceRotation;
+
+        viewCam.transform.position = toView.TransformPoint(localPos);
+        viewCam.transform.rotation = toView.rotation * localRot;
+    }
+    /// <summary>
+    /// Clears temporary render state from the spatialView camera.
+    /// </summary>
+    private void ResetViewCamera(Camera mainCam)
+    {
+        viewCam.targetTexture = null;
+        viewCam.projectionMatrix = mainCam.projectionMatrix;
+        viewCam.ResetProjectionMatrix();
     }
     /// <summary>
     /// Toggles visibility of the linked spatialView screen for rendering.
