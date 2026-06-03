@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 57b9885b89b6d4fbe92f77801ecc3671
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - linkedView: {instanceID: 0}
+  - screen: {instanceID: 0}
+  - screenMaterial: {fileID: 2100000, guid: 862d756f3c67d421c9ce251cd604fbf3, type: 2}
+  - enterCollider: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

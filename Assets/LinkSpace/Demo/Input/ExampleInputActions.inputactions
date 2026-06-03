@@ -1,0 +1,135 @@
+{
+    "version": 1,
+    "name": "ExampleInputActions",
+    "maps": [
+        {
+            "name": "Example",
+            "id": "2c5158ae-bb67-49b4-aeff-cdadfa6ae325",
+            "actions": [
+                {
+                    "name": "PlaceSpatialView",
+                    "type": "Button",
+                    "id": "1f1e8648-e563-4633-9359-1d7fcad02188",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "DestroySpatialView",
+                    "type": "Button",
+                    "id": "c2a4a7c1-c62d-40f0-9b90-4d3748fab0c2",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "LinkSpatialView",
+                    "type": "Button",
+                    "id": "ccd0406b-4340-475f-b788-86c920843004",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "GrabSpatialView",
+                    "type": "Button",
+                    "id": "edea6c1c-c4bc-4d32-8907-452663ebde55",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "SpawnObject",
+                    "type": "Button",
+                    "id": "beeab291-278f-445b-a7a0-1cdf445839d0",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "SwapAlign",
+                    "type": "Button",
+                    "id": "3a2eb0c8-c459-4243-a543-b53b72820b77",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "f64ef9fe-ce26-462e-8247-aea54bbd9c92",
+                    "path": "<XRController>{RightHand}/{PrimaryButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "PlaceSpatialView",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "06d1c6a8-b9d8-49b7-a77e-9ee770e51861",
+                    "path": "<XRController>{RightHand}/{SecondaryButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "DestroySpatialView",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "fa3f96e7-f638-4e82-bd5f-5d848d96b425",
+                    "path": "<XRController>{RightHand}/{TriggerButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "LinkSpatialView",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "a9f0258e-8c84-4b53-ae1c-7083b53dd043",
+                    "path": "<XRController>{RightHand}/{GripButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "GrabSpatialView",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "e79c179d-d786-4583-8a1d-ea74680d1509",
+                    "path": "<XRController>{LeftHand}/{PrimaryButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "SpawnObject",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "6b498c95-17d9-46ec-97b4-3ad10a570f4f",
+                    "path": "<XRController>{LeftHand}/{SecondaryButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "SwapAlign",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        }
+    ],
+    "controlSchemes": []
+}

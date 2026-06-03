@@ -10,10 +10,10 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c42bd61285a4054469993c089df969d8, type: 3}
-  m_Name: PortalRenderFeature
+  m_Name: SpatialViewRenderFeature
   m_EditorClassIdentifier: 
   m_Active: 1
-  portalMaterial: {fileID: 0}
+  spatialViewMaterial: {fileID: 0}
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
