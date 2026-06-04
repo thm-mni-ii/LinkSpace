@@ -21,6 +21,17 @@ public class SpatialView : MonoBehaviour
     [Tooltip("Designates whether this spatialView is an endpoint (inactive visually and physically).")]
     public bool isEndpoint = false;
 
+    [Header("Mapping Scale")]
+    [Tooltip("Controls whether linked positions preserve metric scale or are uniformly scaled when mapped to the linked Spatial View.")]
+    public MappingScaleMode mappingScaleMode = MappingScaleMode.PreserveScale;
+
+    [Tooltip("Uniform scale used when Mapping Scale Mode is Custom Scale Factor.")]
+    [Min(0.0001f)]
+    public float customMappingScale = 1f;
+
+    [Tooltip("When enabled, non-player travellers and their visual clones are uniformly scaled in scale-aware mapping modes.")]
+    public bool scaleTravellerObjects = true;
+
     [Header("Spatial View Creation")]
     [Tooltip("Use the mesh as a spatialView screen.")]
     public bool useMeshAsScreen = true;
@@ -68,12 +79,14 @@ public class SpatialView : MonoBehaviour
 
     private Vector3 prevViewPos;
     private Quaternion prevViewRot;
+    private bool warnedNonUniformMappingScale;
 
     #endregion
 
     #region Enums
 
     public enum ObjectTravelMode { None, Traversation, Raycast }
+    public enum MappingScaleMode { PreserveScale, ScaleByPortalSize, CustomScaleFactor }
 
     #endregion
 
@@ -270,17 +283,13 @@ public class SpatialView : MonoBehaviour
         for (int i = 0; i < trackedTravellers.Count; i++)
         {
             SpatialTraveller traveller = trackedTravellers[i];
-            Transform travellerT = traveller.transform;
-            Matrix4x4 travellerMatrix = travellerT.localToWorldMatrix;
-            Matrix4x4 m = linkedView.transform.localToWorldMatrix * transform.worldToLocalMatrix * travellerMatrix;
-
             if (traveller.graphicsClone != null && traveller.graphicsObject != null)
             {
-                Vector3 localOffset = traveller.graphicsObject.transform.localPosition;
-                Quaternion localRotOffset = traveller.graphicsObject.transform.localRotation;
+                traveller.graphicsClone.transform.position = MapPointToLinkedView(traveller.graphicsObject.transform.position);
+                traveller.graphicsClone.transform.rotation = MapRotationToLinkedView(traveller.graphicsObject.transform.rotation);
 
-                traveller.graphicsClone.transform.position = m.MultiplyPoint(localOffset);
-                traveller.graphicsClone.transform.rotation = m.rotation * localRotOffset;
+                float scale = ShouldScaleTravellerObjects() ? GetMappingScaleTo(linkedView) : 1f;
+                traveller.graphicsClone.transform.localScale = traveller.graphicsObject.transform.localScale * scale;
             }
 
             UpdateSliceParams(traveller);
@@ -297,12 +306,7 @@ public class SpatialView : MonoBehaviour
         for (int i = 0; i < trackedTravellers.Count; i++)
         {
             SpatialTraveller traveller = trackedTravellers[i];
-            Transform travellerT = traveller.transform;
             PlayerSpatialTraveller playerTraveller = traveller as PlayerSpatialTraveller;
-            Matrix4x4 travellerMatrix = playerTraveller != null
-                ? playerTraveller.GetTeleportOriginMatrix()
-                : travellerT.localToWorldMatrix;
-            Matrix4x4 m = linkedView.transform.localToWorldMatrix * transform.worldToLocalMatrix * travellerMatrix;
 
             Vector3 localPos = transform.InverseTransformPoint(traveller.GetPosition());
 
@@ -322,17 +326,25 @@ public class SpatialView : MonoBehaviour
 
                 if (viewSide != viewSideOld)
                 {
+                    Transform travellerT = traveller.transform;
                     Vector3 positionOld = travellerT.position;
                     Quaternion rotationOld = travellerT.rotation;
 
-                    Vector3 newPosition = m.GetColumn(3);
+                    Vector3 newPosition = MapPointToLinkedView(traveller.GetPosition());
+                    Quaternion mappedRotation = playerTraveller == null
+                        ? MapRotationToLinkedView(travellerT.rotation)
+                        : MapRotationToLinkedView(playerTraveller.GetTeleportOriginRotation());
                     Quaternion newRotation = playerTraveller == null
-                        ? m.rotation
-                        : Quaternion.Euler(rotationOld.eulerAngles.x, m.rotation.eulerAngles.y, rotationOld.eulerAngles.z);
+                        ? mappedRotation
+                        : Quaternion.Euler(rotationOld.eulerAngles.x, mappedRotation.eulerAngles.y, rotationOld.eulerAngles.z);
 
                     Vector3 tpOffset = playerTraveller ? linkedView.transform.forward * teleportationOffset * viewSide : Vector3.zero;
 
                     traveller.Teleport(newPosition + tpOffset, newRotation);
+
+                    if (playerTraveller == null && ShouldScaleTravellerObjects())
+                        traveller.ApplyMappingScale(GetMappingScaleTo(linkedView));
+
                     onObjectTravel.Invoke(traveller);
 
                     if (traveller.graphicsClone != null)
@@ -512,9 +524,6 @@ public class SpatialView : MonoBehaviour
     {
         if (!linkedView || target == null) return;
 
-        Transform fromView = transform;
-        Transform toView = linkedView.transform;
-
         CopyCameraSettings(mainCam);
         viewCam.projectionMatrix = mainCam.GetStereoProjectionMatrix(eye);
         viewCam.targetTexture = target;
@@ -522,10 +531,10 @@ public class SpatialView : MonoBehaviour
         Vector3 eyeWorldPos = mainCam.GetStereoViewMatrix(eye).inverse.MultiplyPoint(Vector3.zero);
         Quaternion eyeWorldRot = mainCam.transform.rotation;
 
-        PositionViewCamera(fromView, toView, eyeWorldPos, eyeWorldRot);
+        PositionViewCamera(linkedView, eyeWorldPos, eyeWorldRot);
 
         SetLinkedViewVisible(false);
-        SetNearClipPlaneVR(toView);
+        SetNearClipPlaneVR(linkedView.transform);
         viewCam.Render();
         SetLinkedViewVisible(true);
     }
@@ -536,17 +545,14 @@ public class SpatialView : MonoBehaviour
     {
         if (!linkedView || target == null) return;
 
-        Transform fromView = transform;
-        Transform toView = linkedView.transform;
-
         CopyCameraSettings(mainCam);
         viewCam.projectionMatrix = mainCam.projectionMatrix;
         viewCam.targetTexture = target;
 
-        PositionViewCamera(fromView, toView, mainCam.transform.position, mainCam.transform.rotation);
+        PositionViewCamera(linkedView, mainCam.transform.position, mainCam.transform.rotation);
 
         SetLinkedViewVisible(false);
-        SetNearClipPlaneVR(toView);
+        SetNearClipPlaneVR(linkedView.transform);
         viewCam.Render();
         SetLinkedViewVisible(true);
     }
@@ -561,13 +567,10 @@ public class SpatialView : MonoBehaviour
     /// <summary>
     /// Positions the spatialView camera relative to the linked spatialView.
     /// </summary>
-    private void PositionViewCamera(Transform fromView, Transform toView, Vector3 sourcePosition, Quaternion sourceRotation)
+    private void PositionViewCamera(SpatialView targetView, Vector3 sourcePosition, Quaternion sourceRotation)
     {
-        Vector3 localPos = fromView.InverseTransformPoint(sourcePosition);
-        Quaternion localRot = Quaternion.Inverse(fromView.rotation) * sourceRotation;
-
-        viewCam.transform.position = toView.TransformPoint(localPos);
-        viewCam.transform.rotation = toView.rotation * localRot;
+        viewCam.transform.position = MapPointTo(targetView, sourcePosition);
+        viewCam.transform.rotation = MapRotationTo(targetView, sourceRotation);
     }
     /// <summary>
     /// Clears temporary render state from the spatialView camera.
@@ -680,6 +683,150 @@ public class SpatialView : MonoBehaviour
     /// Checks if two positions are on the same side of the spatialView.
     /// </summary>
     public bool SameSideOfView(Vector3 posA, Vector3 posB) => SideOfView(posA) == SideOfView(posB);
+
+    public float GetMappingScaleTo(SpatialView targetView)
+    {
+        if (targetView == null)
+            return 1f;
+
+        switch (mappingScaleMode)
+        {
+            case MappingScaleMode.ScaleByPortalSize:
+                float sourceSize = GetUniformPortalSize();
+                float targetSize = targetView.GetUniformPortalSize();
+                WarnIfNonUniformScale(targetView.GetPortalLossyScale(), targetView.GetPortalScaleTransform());
+                return sourceSize > Mathf.Epsilon ? targetSize / sourceSize : 1f;
+            case MappingScaleMode.CustomScaleFactor:
+                return Mathf.Max(0.0001f, customMappingScale);
+            default:
+                return 1f;
+        }
+    }
+
+    public bool ShouldScaleTravellerObjects()
+    {
+        return scaleTravellerObjects && !Mathf.Approximately(GetMappingScaleTo(linkedView), 1f);
+    }
+
+    public Vector3 MapPointToLinkedView(Vector3 worldPoint)
+    {
+        return MapPointTo(linkedView, worldPoint);
+    }
+
+    public Vector3 MapPointTo(SpatialView targetView, Vector3 worldPoint)
+    {
+        if (targetView == null)
+            return worldPoint;
+
+        Vector3 localPoint = Quaternion.Inverse(transform.rotation) * (worldPoint - transform.position);
+        return targetView.transform.position + targetView.transform.rotation * (localPoint * GetMappingScaleTo(targetView));
+    }
+
+    public Vector3 MapLinkedPointToSource(Vector3 linkedWorldPoint)
+    {
+        if (linkedView == null)
+            return linkedWorldPoint;
+
+        float scale = GetMappingScaleTo(linkedView);
+        Vector3 linkedLocalPoint = Quaternion.Inverse(linkedView.transform.rotation) * (linkedWorldPoint - linkedView.transform.position);
+        return transform.position + transform.rotation * (linkedLocalPoint / Mathf.Max(0.0001f, scale));
+    }
+
+    public Quaternion MapRotationToLinkedView(Quaternion worldRotation)
+    {
+        return MapRotationTo(linkedView, worldRotation);
+    }
+
+    public Quaternion MapRotationTo(SpatialView targetView, Quaternion worldRotation)
+    {
+        if (targetView == null)
+            return worldRotation;
+
+        Quaternion localRotation = Quaternion.Inverse(transform.rotation) * worldRotation;
+        return targetView.transform.rotation * localRotation;
+    }
+
+    public Vector3 MapDirectionToLinkedView(Vector3 worldDirection)
+    {
+        return MapDirectionTo(linkedView, worldDirection);
+    }
+
+    public Vector3 MapDirectionTo(SpatialView targetView, Vector3 worldDirection)
+    {
+        if (targetView == null)
+            return worldDirection.normalized;
+
+        Vector3 localDirection = Quaternion.Inverse(transform.rotation) * worldDirection;
+        return (targetView.transform.rotation * localDirection).normalized;
+    }
+
+    public Vector3 MapLinearVelocityTo(SpatialView targetView, Vector3 velocity)
+    {
+        if (targetView == null)
+            return velocity;
+
+        Vector3 localVelocity = Quaternion.Inverse(transform.rotation) * velocity;
+        return targetView.transform.rotation * (localVelocity * GetMappingScaleTo(targetView));
+    }
+
+    public Vector3 MapAngularVelocityTo(SpatialView targetView, Vector3 angularVelocity)
+    {
+        if (targetView == null)
+            return angularVelocity;
+
+        Vector3 localAngularVelocity = Quaternion.Inverse(transform.rotation) * angularVelocity;
+        return targetView.transform.rotation * localAngularVelocity;
+    }
+
+    private float GetUniformPortalSize()
+    {
+        Renderer renderer = screen != null ? screen.meshRenderer : null;
+
+        if (renderer != null)
+        {
+            Bounds localBounds = renderer.localBounds;
+            Vector3 lossyScale = GetPortalLossyScale();
+            WarnIfNonUniformScale(lossyScale, GetPortalScaleTransform());
+
+            float width = Mathf.Abs(localBounds.size.x * lossyScale.x);
+            float height = Mathf.Abs(localBounds.size.y * lossyScale.y);
+            float area = Mathf.Max(0.0001f, width * height);
+            return Mathf.Sqrt(area);
+        }
+
+        Vector3 fallbackScale = GetPortalLossyScale();
+        WarnIfNonUniformScale(fallbackScale, GetPortalScaleTransform());
+        return Mathf.Max(0.0001f, (Mathf.Abs(fallbackScale.x) + Mathf.Abs(fallbackScale.y) + Mathf.Abs(fallbackScale.z)) / 3f);
+    }
+
+    private Transform GetPortalScaleTransform()
+    {
+        return screen != null ? screen.transform : transform;
+    }
+
+    private Vector3 GetPortalLossyScale()
+    {
+        return GetPortalScaleTransform().lossyScale;
+    }
+
+    private void WarnIfNonUniformScale(Vector3 scale, Transform scaleTransform)
+    {
+        if (mappingScaleMode != MappingScaleMode.ScaleByPortalSize || warnedNonUniformMappingScale)
+            return;
+
+        float x = Mathf.Abs(scale.x);
+        float y = Mathf.Abs(scale.y);
+        float z = Mathf.Abs(scale.z);
+        bool nonUniform = !Mathf.Approximately(x, y) || !Mathf.Approximately(x, z);
+
+        if (!nonUniform)
+            return;
+
+        Debug.LogWarning(
+            $"SpatialView '{name}' uses Scale By Portal Size with non-uniform scale on '{scaleTransform.name}'. LinkSpace uses a single uniform portal-size factor for mapping.",
+            this);
+        warnedNonUniformMappingScale = true;
+    }
 
     /// <summary>
     /// Links a SpatialView to this spatialView.

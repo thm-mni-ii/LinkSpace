@@ -70,6 +70,17 @@ public class SpatialTraveller : MonoBehaviour
     }
 
     /// <summary>
+    /// Applies a uniform mapping scale to the traveller.
+    /// </summary>
+    public virtual void ApplyMappingScale(float scaleMultiplier)
+    {
+        if (Mathf.Approximately(scaleMultiplier, 1f))
+            return;
+
+        transform.localScale *= Mathf.Max(0.0001f, scaleMultiplier);
+    }
+
+    /// <summary>
     /// Called when the traveller first touches a spatialView.
     /// Sets up the graphics clone and material references.
     /// </summary>

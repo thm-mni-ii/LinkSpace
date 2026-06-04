@@ -145,24 +145,23 @@ public class LinkSpaceRayInteractor : XRRayInteractor
     /// </summary>
     private void RedirectRayThroughSpatialViewArc(SpatialView spatialView, RaycastHit hit)
     {
-        if (spatialView == null || spatialView.linkedView == null || lineRenderer == null)
+        if (spatialView == null || spatialView.linkedView == null || lineRenderer == null || arcSegments < 2)
             return;
 
-        Transform viewTransform = spatialView.transform;
-        Transform linkedViewTransform = spatialView.linkedView.transform;
+        Vector3 newOrigin = spatialView.MapPointToLinkedView(hit.point);
+        Vector3 exitDir = spatialView.MapDirectionToLinkedView(redirectDir);
+        float distanceScale = spatialView.GetMappingScaleTo(spatialView.linkedView);
+        float mappedArcSpeed = arcSpeed * distanceScale;
+        float mappedMaxArcDistance = maxArcDistance * distanceScale;
 
-        Vector3 originalDir = (hit.point - attachTransform.position).normalized;
-        Vector3 localHitPoint = viewTransform.InverseTransformPoint(hit.point);
-        Vector3 localDir = viewTransform.InverseTransformDirection(originalDir);
-
-        Vector3 newOrigin = linkedViewTransform.TransformPoint(localHitPoint);
-        Vector3 exitDir = linkedViewTransform.TransformDirection(viewTransform.InverseTransformDirection(redirectDir)).normalized;
+        if (mappedArcSpeed <= Mathf.Epsilon)
+            return;
 
         Vector3[] arcPoints = new Vector3[arcSegments];
         for (int i = 0; i < arcSegments; i++)
         {
-            float t = i / (float)(arcSegments - 1) * (maxArcDistance / arcSpeed);
-            arcPoints[i] = newOrigin + exitDir * arcSpeed * t + 0.5f * Physics.gravity * t * t;
+            float t = i / (float)(arcSegments - 1) * (mappedMaxArcDistance / mappedArcSpeed);
+            arcPoints[i] = newOrigin + exitDir * mappedArcSpeed * t + 0.5f * Physics.gravity * t * t;
         }
 
         int layerMask = ~LayerMask.GetMask("SpatialViewScreen");

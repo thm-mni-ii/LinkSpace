@@ -81,16 +81,12 @@ public class LinkSpaceNearFarInteractor : NearFarInteractor
         if (currentView == null || currentView.linkedView == null)
             return;
 
-        Transform viewTransform = currentView.transform;
-        Transform linkedViewTransform = currentView.linkedView.transform;
-
         Vector3 rayDir = (farInteractionCaster.lastSamplePoint - farInteractionCaster.castOrigin.position).normalized;
 
-        Matrix4x4 viewToLinked = linkedViewTransform.localToWorldMatrix * viewTransform.worldToLocalMatrix;
-        Vector3 newOrigin = viewToLinked.MultiplyPoint(currentViewHitPoint);
-        Vector3 newDirection = viewToLinked.MultiplyVector(rayDir);
+        Vector3 newOrigin = currentView.MapPointToLinkedView(currentViewHitPoint);
+        Vector3 newDirection = currentView.MapDirectionToLinkedView(rayDir);
 
-        float rayLength = 10f;
+        float rayLength = 10f * currentView.GetMappingScaleTo(currentView.linkedView);
 
         int layerMask = ~LayerMask.GetMask("SpatialViewScreen");
         if (Physics.Raycast(newOrigin, newDirection, out RaycastHit redirectedHit, rayLength, layerMask))
@@ -98,8 +94,7 @@ public class LinkSpaceNearFarInteractor : NearFarInteractor
             IXRSelectInteractable interactable = redirectedHit.collider.GetComponentInParent<IXRSelectInteractable>();
             if (interactable != null && !hasSelection && IsGrabPressed())
             {
-                Vector3 localOffsetToLinkedSpatialView = linkedViewTransform.InverseTransformPoint(interactable.transform.position);
-                Vector3 worldOffsetAtCurrentSpatialView = viewTransform.TransformPoint(localOffsetToLinkedSpatialView);
+                Vector3 worldOffsetAtCurrentSpatialView = currentView.MapLinkedPointToSource(interactable.transform.position);
 
                 interactionManager.SelectEnter(this, interactable);
                 interactionAttachController.MoveTo(worldOffsetAtCurrentSpatialView);

@@ -113,11 +113,8 @@ public class GrabSpatialTraveller : SpatialTraveller
 
         if (fromView != null && toView != null)
         {
-            Vector3 localVel = fromView.transform.InverseTransformDirection(rb.linearVelocity);
-            rb.linearVelocity = toView.transform.TransformDirection(localVel);
-
-            Vector3 localAngVel = fromView.transform.InverseTransformDirection(rb.angularVelocity);
-            rb.angularVelocity = toView.transform.TransformDirection(localAngVel);
+            rb.linearVelocity = fromView.MapLinearVelocityTo(toView, rb.linearVelocity);
+            rb.angularVelocity = fromView.MapAngularVelocityTo(toView, rb.angularVelocity);
         }
         
     }
@@ -252,15 +249,22 @@ public class GrabSpatialTraveller : SpatialTraveller
         {
             if (grabRayHasHit)
             {
-                Matrix4x4 m = toView.transform.localToWorldMatrix *
-                              fromView.transform.worldToLocalMatrix *
-                              transform.localToWorldMatrix;
+                SpatialView sourceView = fromView;
+                SpatialView targetView = toView;
+                Vector3 mappedPosition = sourceView.MapPointTo(targetView, rb.position);
+                Quaternion mappedRotation = sourceView.MapRotationTo(targetView, rb.rotation);
+                float mappedScale = sourceView.GetMappingScaleTo(targetView);
+                bool shouldScaleObject = sourceView.ShouldScaleTravellerObjects();
 
-                fromView.ReleaseTraveller(this);
+                sourceView.ReleaseTraveller(this);
 
-                rb.position = m.GetColumn(3);
-                rb.rotation = m.rotation;
-                StartCoroutine(ApplyVelocity(m));
+                rb.position = mappedPosition;
+                rb.rotation = mappedRotation;
+
+                if (shouldScaleObject)
+                    ApplyMappingScale(mappedScale);
+
+                StartCoroutine(ApplyVelocity(sourceView, targetView));
             }
             else
             {
@@ -271,15 +275,22 @@ public class GrabSpatialTraveller : SpatialTraveller
         {
             if (markedForTeleport)
             {
-                Matrix4x4 m = toView.transform.localToWorldMatrix *
-                              fromView.transform.worldToLocalMatrix *
-                              transform.localToWorldMatrix;
+                SpatialView sourceView = fromView;
+                SpatialView targetView = toView;
+                Vector3 mappedPosition = sourceView.MapPointTo(targetView, rb.position);
+                Quaternion mappedRotation = sourceView.MapRotationTo(targetView, rb.rotation);
+                float mappedScale = sourceView.GetMappingScaleTo(targetView);
+                bool shouldScaleObject = sourceView.ShouldScaleTravellerObjects();
 
-                fromView.ReleaseTraveller(this);
+                sourceView.ReleaseTraveller(this);
 
-                rb.position = m.GetColumn(3);
-                rb.rotation = m.rotation;
-                StartCoroutine(ApplyVelocity(m));
+                rb.position = mappedPosition;
+                rb.rotation = mappedRotation;
+
+                if (shouldScaleObject)
+                    ApplyMappingScale(mappedScale);
+
+                StartCoroutine(ApplyVelocity(sourceView, targetView));
             }
             else
             {
@@ -295,11 +306,11 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// <summary>
     /// Applies transformed velocities after teleportation.
     /// </summary>
-    private IEnumerator ApplyVelocity(Matrix4x4 m)
+    private IEnumerator ApplyVelocity(SpatialView sourceView, SpatialView targetView)
     {
         yield return null;
-        rb.linearVelocity = m.MultiplyVector(rb.linearVelocity);
-        rb.angularVelocity = m.MultiplyVector(rb.angularVelocity);
+        rb.linearVelocity = sourceView.MapLinearVelocityTo(targetView, rb.linearVelocity);
+        rb.angularVelocity = sourceView.MapAngularVelocityTo(targetView, rb.angularVelocity);
     }
 
     #endregion

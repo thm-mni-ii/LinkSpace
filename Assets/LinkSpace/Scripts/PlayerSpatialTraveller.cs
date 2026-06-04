@@ -52,6 +52,15 @@ public class PlayerSpatialTraveller : SpatialTraveller
     }
 
     /// <summary>
+    /// Returns the rotation of the point that should cross the spatialView.
+    /// </summary>
+    public Quaternion GetTeleportOriginRotation()
+    {
+        ResolveTeleportOrigin();
+        return teleportOrigin != null ? teleportOrigin.rotation : transform.rotation;
+    }
+
+    /// <summary>
     /// Teleports the player and toggles teleportation flags on grabbed travellers.
     /// </summary>
     public override void Teleport(Vector3 pos, Quaternion rot)

@@ -8,6 +8,10 @@ public class SpatialViewInspector : Editor
     private SerializedProperty teleportationOffset;
     private SerializedProperty isEndpoint;
 
+    private SerializedProperty mappingScaleMode;
+    private SerializedProperty customMappingScale;
+    private SerializedProperty scaleTravellerObjects;
+
     private SerializedProperty useMeshAsScreen;
     private SerializedProperty screen;
     private SerializedProperty screenMaterial;
@@ -24,6 +28,7 @@ public class SpatialViewInspector : Editor
 
     // Foldout states
     private bool foldMain = true;
+    private bool foldMappingScale = true;
     private bool foldCreation = true;
     private bool foldNavigation = true;
     private bool foldObjectTravel = true;
@@ -36,6 +41,11 @@ public class SpatialViewInspector : Editor
         linkedView = serializedObject.FindProperty("linkedView");
         teleportationOffset = serializedObject.FindProperty("teleportationOffset");
         isEndpoint = serializedObject.FindProperty("isEndpoint");
+
+        // Mapping Scale
+        mappingScaleMode = serializedObject.FindProperty("mappingScaleMode");
+        customMappingScale = serializedObject.FindProperty("customMappingScale");
+        scaleTravellerObjects = serializedObject.FindProperty("scaleTravellerObjects");
 
         // Spatial View Creation
         useMeshAsScreen = serializedObject.FindProperty("useMeshAsScreen");
@@ -62,6 +72,7 @@ public class SpatialViewInspector : Editor
         serializedObject.Update();
 
         DrawMainSettings();
+        DrawMappingScale();
         DrawSpatialViewCreation();
         DrawNavigation();
         DrawObjectTravel();
@@ -83,6 +94,28 @@ public class SpatialViewInspector : Editor
             EditorGUILayout.PropertyField(linkedView);
             EditorGUILayout.PropertyField(teleportationOffset);
             EditorGUILayout.PropertyField(isEndpoint);
+        }
+        EditorGUILayout.EndFoldoutHeaderGroup();
+        EditorGUILayout.Space();
+    }
+
+    private void DrawMappingScale()
+    {
+        foldMappingScale = EditorGUILayout.BeginFoldoutHeaderGroup(foldMappingScale, "Mapping Scale");
+        if (foldMappingScale)
+        {
+            EditorGUILayout.PropertyField(mappingScaleMode);
+
+            SpatialView.MappingScaleMode mode = (SpatialView.MappingScaleMode)mappingScaleMode.enumValueIndex;
+            if (mode == SpatialView.MappingScaleMode.CustomScaleFactor)
+            {
+                EditorGUILayout.PropertyField(customMappingScale);
+            }
+
+            if (mode != SpatialView.MappingScaleMode.PreserveScale)
+            {
+                EditorGUILayout.PropertyField(scaleTravellerObjects);
+            }
         }
         EditorGUILayout.EndFoldoutHeaderGroup();
         EditorGUILayout.Space();
