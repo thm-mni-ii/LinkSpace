@@ -204,7 +204,7 @@ public class SpatialView : MonoBehaviour
 
         if (grabTraveller)
         {
-            if (grabTraveller.IsGrabbed() && travelMode == ObjectTravelMode.Raycast) return;
+            if (grabTraveller.IsPortalTransferActive) return;
             grabTraveller.PrepareTeleportOnRelease(this, linkedView);
         }
 
@@ -221,7 +221,7 @@ public class SpatialView : MonoBehaviour
         {
             var grabTraveller = traveller as GrabSpatialTraveller;
 
-            if (grabTraveller && grabTraveller.IsGrabbed()) return;
+            if (grabTraveller && grabTraveller.IsGrabbed() && !grabTraveller.IsPortalTransferActive) return;
 
             ReleaseTraveller(traveller);
         }
@@ -316,7 +316,7 @@ public class SpatialView : MonoBehaviour
     {
         if (isEndpoint || traveller == null) return;
 
-        traveller.ExitSpatialViewThreshold();
+        traveller.ExitSpatialViewThreshold(this);
         trackedTravellers.Remove(traveller);
         travellerPreviousPositions.Remove(traveller);
     }
@@ -334,6 +334,10 @@ public class SpatialView : MonoBehaviour
         for (int i = 0; i < trackedTravellers.Count; i++)
         {
             SpatialTraveller traveller = trackedTravellers[i];
+
+            if (!traveller.IsPortalVisualOwner(this))
+                continue;
+
             if (traveller.graphicsClone != null && traveller.graphicsObject != null)
             {
                 traveller.graphicsClone.transform.position = MapPointToLinkedView(traveller.graphicsObject.transform.position);
@@ -472,12 +476,32 @@ public class SpatialView : MonoBehaviour
     /// </summary>
     public bool DidCrossVisibleScreen(Vector3 previousWorldPosition, Vector3 currentWorldPosition)
     {
+        return TryGetVisibleScreenCrossing(previousWorldPosition, currentWorldPosition, out _, out _);
+    }
+
+    /// <summary>
+    /// Checks whether a world-space movement segment crosses the visible screen surface.
+    /// </summary>
+    public bool TryGetVisibleScreenCrossing(
+        Vector3 previousWorldPosition,
+        Vector3 currentWorldPosition,
+        out int sourceExitSide,
+        out Vector3 crossingWorldPosition)
+    {
         return TryGetScreenCrossing(
             previousWorldPosition,
             currentWorldPosition,
             transform.worldToLocalMatrix,
-            out _,
-            out _);
+            out sourceExitSide,
+            out crossingWorldPosition);
+    }
+
+    /// <summary>
+    /// Checks whether a world-space point is inside the broad tracking trigger volume.
+    /// </summary>
+    public bool ContainsEnterColliderPoint(Vector3 worldPoint)
+    {
+        return IsPointInsideEnterCollider(worldPoint);
     }
 
     /// <summary>
@@ -1050,6 +1074,9 @@ public class SpatialView : MonoBehaviour
     void UpdateSliceParams(SpatialTraveller traveller)
     {
         if (traveller == null || traveller.graphicsObject == null) return;
+        if (!traveller.IsPortalVisualOwner(this)) return;
+        if (traveller.originalMaterials == null || traveller.cloneMaterials == null) return;
+
         int side = SideOfView(traveller.GetPosition());
         Vector3 sliceNormal = transform.forward * -side;
         Vector3 slicePos = transform.position;

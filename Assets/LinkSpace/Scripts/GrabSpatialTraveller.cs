@@ -2,6 +2,7 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using UnityEngine.XR.Interaction.Toolkit.Interactors;
 using static SpatialView;
 
 /// <summary>
@@ -38,8 +39,24 @@ public class GrabSpatialTraveller : SpatialTraveller
 
     #region Private Variables
 
+    private const float MinRaycastDistance = 0.001f;
+
     private bool grabRayHasHit;
     private Vector3 lastPos;
+    private IXRSelectInteractor primaryGrabInteractor;
+    private Vector3 grabLocalPosition;
+    private Quaternion grabLocalRotation = Quaternion.identity;
+    private bool hasGrabPose;
+    private bool isPortalTransferActive;
+    private SpatialView liveSourceView;
+    private SpatialView liveTargetView;
+    private Vector3 liveLastSourcePosition;
+    private int liveTransferStartFrame = -1;
+    private float liveScaleMultiplier = 1f;
+    private bool liveAppliedScale;
+    private bool savedTrackPosition;
+    private bool savedTrackRotation;
+    private bool hasSavedGrabTrackingSettings;
 
     #endregion
 
@@ -63,11 +80,33 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     private void Update()
     {
-        if (IsGrabbed())
+        if (!IsGrabbed() || isPortalTransferActive)
+            return;
+
+        HandleRaycastTravel();
+    }
+
+    private void LateUpdate()
+    {
+        if (!IsGrabbed())
         {
-            HandleRaycastTravel();
-            HandleTraversionTravel();
+            lastPos = transform.position;
+            return;
         }
+
+        if (isPortalTransferActive)
+            UpdateLivePortalTransfer();
+        else
+            HandleScreenCrossingTravel();
+    }
+
+    [BeforeRenderOrder(XRInteractionUpdateOrder.k_BeforeRenderOrder + 1)]
+    private void OnBeforeRender()
+    {
+        if (!isPortalTransferActive || !IsGrabbed())
+            return;
+
+        ApplyLivePortalTransferPose();
     }
 
     /// <summary>
@@ -75,6 +114,8 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     private void OnDestroy()
     {
+        RestoreGrabTracking();
+
         if (grabInteractable != null)
         {
             grabInteractable.selectExited.RemoveListener(OnRelease);
@@ -108,15 +149,13 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     public override void Teleport(Vector3 pos, Quaternion rot)
     {
-        rb.position = pos;
-        rb.rotation = rot;
+        ApplyPose(pos, rot);
 
         if (fromView != null && toView != null)
         {
             rb.linearVelocity = fromView.MapLinearVelocityTo(toView, rb.linearVelocity);
             rb.angularVelocity = fromView.MapAngularVelocityTo(toView, rb.angularVelocity);
         }
-        
     }
 
     /// <summary>
@@ -125,9 +164,26 @@ public class GrabSpatialTraveller : SpatialTraveller
     public override void ExitSpatialViewThreshold()
     {
         base.ExitSpatialViewThreshold();
-        //if (fromView.travelMode == ObjectTravelMode.Traversation && IsGrabbed()) return;
         fromView = null;
         toView = null;
+    }
+
+    public override void ExitSpatialViewThreshold(SpatialView spatialView)
+    {
+        base.ExitSpatialViewThreshold(spatialView);
+
+        if (fromView == spatialView)
+        {
+            fromView = null;
+            toView = null;
+            markedForTeleport = false;
+            grabRayHasHit = false;
+        }
+    }
+
+    public override bool UsesPortalVisualClone(SpatialView spatialView)
+    {
+        return !IsGrabbed() && !isPortalTransferActive;
     }
 
     /// <summary>
@@ -135,6 +191,9 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     public void PrepareTeleportOnRelease(SpatialView from, SpatialView to)
     {
+        if (isPortalTransferActive)
+            return;
+
         fromView = from;
         toView = to;
     }
@@ -147,6 +206,8 @@ public class GrabSpatialTraveller : SpatialTraveller
         return grabInteractable != null && grabInteractable.isSelected;
     }
 
+    public bool IsPortalTransferActive => isPortalTransferActive;
+
     #endregion
 
     #region Private Methods
@@ -156,8 +217,14 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     private void HandleRaycastTravel()
     {
+        if (!TryGetPrimaryInteractorAttach(out Transform attachTransform))
+        {
+            grabRayHasHit = false;
+            return;
+        }
+
         RaycastHit hit;
-        grabRayHasHit = Raycast(grabInteractable.interactorsSelecting[0].transform.position, transform.position, out hit);
+        grabRayHasHit = Raycast(attachTransform.position, transform.position, out hit);
 
         if (grabRayHasHit)
         {
@@ -171,7 +238,9 @@ public class GrabSpatialTraveller : SpatialTraveller
         }
         else
         {
-            if (fromView != null && fromView.travelMode == ObjectTravelMode.Raycast)
+            if (fromView != null
+                && fromView.travelMode == ObjectTravelMode.Raycast
+                && !fromView.ContainsEnterColliderPoint(transform.position))
             {
                 fromView.ReleaseTraveller(this);
             }
@@ -179,24 +248,23 @@ public class GrabSpatialTraveller : SpatialTraveller
     }
 
     /// <summary>
-    /// Handles teleportation via traversal mode when the object is grabbed.
+    /// Starts a live portal transfer when the grabbed object crosses the visible screen.
     /// </summary>
-    private void HandleTraversionTravel()
+    private void HandleScreenCrossingTravel()
     {
-        if (fromView != null && fromView.travelMode == ObjectTravelMode.Traversation && IsGrabbed() && TraveledThroughScreen())
+        if (!TryGetCurrentGrabSourcePose(out Pose sourcePose))
         {
-            markedForTeleport = !markedForTeleport;
+            lastPos = transform.position;
+            return;
         }
 
-        lastPos = transform.position;
-    }
+        if (TryGetCrossedPortal(sourcePose.position, out SpatialView sourceView, out SpatialView targetView))
+        {
+            BeginLivePortalTransfer(sourceView, targetView, sourcePose);
+            return;
+        }
 
-    /// <summary>
-    /// Checks if the traveller has moved through a spatialView screen.
-    /// </summary>
-    private bool TraveledThroughScreen()
-    {
-        return fromView != null && fromView.DidCrossVisibleScreen(lastPos, transform.position);
+        lastPos = sourcePose.position;
     }
 
     /// <summary>
@@ -206,6 +274,12 @@ public class GrabSpatialTraveller : SpatialTraveller
     {
         Vector3 direction = endPos - startPos;
         float distance = direction.magnitude;
+
+        if (distance <= MinRaycastDistance)
+        {
+            hit = default;
+            return false;
+        }
 
         int spatialViewLayer = LayerMask.NameToLayer("SpatialViewScreen");
         if (spatialViewLayer == -1)
@@ -223,15 +297,78 @@ public class GrabSpatialTraveller : SpatialTraveller
         return didHit;
     }
 
+    private bool TryGetCrossedPortal(Vector3 currentSourcePosition, out SpatialView sourceView, out SpatialView targetView)
+    {
+        sourceView = null;
+        targetView = null;
+
+        if (fromView != null
+            && toView != null
+            && !fromView.isEndpoint
+            && fromView.travelMode != ObjectTravelMode.None
+            && fromView.TryGetVisibleScreenCrossing(lastPos, currentSourcePosition, out _, out _))
+        {
+            sourceView = fromView;
+            targetView = toView;
+            return true;
+        }
+
+        if (!TryRaycastCrossedScreen(lastPos, currentSourcePosition, out SpatialView crossedView))
+            return false;
+
+        if (crossedView == null
+            || crossedView.linkedView == null
+            || crossedView.isEndpoint
+            || crossedView.travelMode == ObjectTravelMode.None)
+        {
+            return false;
+        }
+
+        sourceView = crossedView;
+        targetView = crossedView.linkedView;
+        return true;
+    }
+
+    private bool TryRaycastCrossedScreen(Vector3 previousSourcePosition, Vector3 currentSourcePosition, out SpatialView crossedView)
+    {
+        crossedView = null;
+
+        Vector3 direction = currentSourcePosition - previousSourcePosition;
+        float distance = direction.magnitude;
+
+        if (distance <= MinRaycastDistance)
+            return false;
+
+        int spatialViewLayer = LayerMask.NameToLayer("SpatialViewScreen");
+        if (spatialViewLayer == -1)
+            return false;
+
+        int layerMask = 1 << spatialViewLayer;
+
+        if (!Physics.Raycast(previousSourcePosition, direction.normalized, out RaycastHit hit, distance, layerMask))
+            return false;
+
+        SpatialView hitView = hit.collider.GetComponentInParent<SpatialView>();
+
+        if (hitView == null || !hitView.TryGetVisibleScreenCrossing(previousSourcePosition, currentSourcePosition, out _, out _))
+            return false;
+
+        crossedView = hitView;
+        return true;
+    }
+
     /// <summary>
     /// Called when the object is grabbed.
     /// </summary>
     private void OnGrab(SelectEnterEventArgs args)
     {
-        LinkSpaceManager.Instance.player.AddGrabbedTraveller(this);
+        LinkSpaceManager.Instance?.player?.AddGrabbedTraveller(this);
+        CaptureGrabPose(args.interactorObject);
+        DisablePortalVisuals();
+        lastPos = transform.position;
 
-        if (fromView == null) return;
-        fromView.ReleaseTraveller(this);
+        if (fromView != null && !fromView.ContainsEnterColliderPoint(transform.position))
+            fromView.ReleaseTraveller(this);
     }
 
     /// <summary>
@@ -240,66 +377,256 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     private void OnRelease(SelectExitEventArgs args)
     {
-        LinkSpaceManager.Instance.player.RemoveGrabbedTraveller(this);
+        LinkSpaceManager.Instance?.player?.RemoveGrabbedTraveller(this);
 
-        if (fromView == null || fromView.isEndpoint) return;
-
-        if (fromView.travelMode == ObjectTravelMode.Raycast)
+        if (isPortalTransferActive)
         {
-            if (grabRayHasHit)
+            SpatialView sourceView = liveSourceView;
+            SpatialView targetView = liveTargetView;
+            ClearLivePortalTransfer();
+
+            if (sourceView != null && targetView != null)
             {
-                SpatialView sourceView = fromView;
-                SpatialView targetView = toView;
-                Vector3 mappedPosition = sourceView.MapPointTo(targetView, rb.position);
-                Quaternion mappedRotation = sourceView.MapRotationTo(targetView, rb.rotation);
-                float mappedScale = sourceView.GetMappingScaleTo(targetView);
-                bool shouldScaleObject = sourceView.ShouldScaleTravellerObjects();
-
-                sourceView.ReleaseTraveller(this);
-
-                rb.position = mappedPosition;
-                rb.rotation = mappedRotation;
-
-                if (shouldScaleObject)
-                    ApplyMappingScale(mappedScale);
-
                 StartCoroutine(ApplyVelocity(sourceView, targetView));
+                StartCoroutine(TrackReleasedObjectFromViewNextFrame(targetView));
             }
-            else
-            {
-                fromView.ReleaseTraveller(this);
-            }
+
+            ClearGrabPose();
+            return;
         }
-        else
+
+        RefreshReleasedObjectTracking();
+        ClearGrabPose();
+    }
+
+    private void BeginLivePortalTransfer(SpatialView sourceView, SpatialView targetView, Pose sourcePose)
+    {
+        if (sourceView == null || targetView == null || targetView.isEndpoint)
+            return;
+
+        liveSourceView = sourceView;
+        liveTargetView = targetView;
+        liveLastSourcePosition = sourcePose.position;
+        liveTransferStartFrame = Time.frameCount;
+        liveScaleMultiplier = sourceView.GetMappingScaleTo(targetView);
+        liveAppliedScale = sourceView.ShouldScaleTravellerObjects();
+        isPortalTransferActive = true;
+        markedForTeleport = false;
+        grabRayHasHit = false;
+
+        sourceView.ReleaseTraveller(this);
+        DisablePortalVisuals();
+        fromView = null;
+        toView = null;
+        SaveAndDisableGrabTracking();
+
+        ApplyMappedPose(sourceView, targetView, sourcePose);
+
+        if (liveAppliedScale)
+            ApplyMappingScale(liveScaleMultiplier);
+
+        rb.linearVelocity = sourceView.MapLinearVelocityTo(targetView, rb.linearVelocity);
+        rb.angularVelocity = sourceView.MapAngularVelocityTo(targetView, rb.angularVelocity);
+        sourceView.onObjectTravel.Invoke(this);
+    }
+
+    private void UpdateLivePortalTransfer()
+    {
+        if (liveSourceView == null || liveTargetView == null)
         {
-            if (markedForTeleport)
-            {
-                SpatialView sourceView = fromView;
-                SpatialView targetView = toView;
-                Vector3 mappedPosition = sourceView.MapPointTo(targetView, rb.position);
-                Quaternion mappedRotation = sourceView.MapRotationTo(targetView, rb.rotation);
-                float mappedScale = sourceView.GetMappingScaleTo(targetView);
-                bool shouldScaleObject = sourceView.ShouldScaleTravellerObjects();
-
-                sourceView.ReleaseTraveller(this);
-
-                rb.position = mappedPosition;
-                rb.rotation = mappedRotation;
-
-                if (shouldScaleObject)
-                    ApplyMappingScale(mappedScale);
-
-                StartCoroutine(ApplyVelocity(sourceView, targetView));
-            }
-            else
-            {
-                fromView.ReleaseTraveller(this);
-            }
-
-            fromView = null;
-            toView = null;
-            markedForTeleport = false;
+            ClearLivePortalTransfer();
+            return;
         }
+
+        if (!TryGetCurrentGrabSourcePose(out Pose sourcePose))
+        {
+            ClearLivePortalTransfer();
+            return;
+        }
+
+        if (Time.frameCount != liveTransferStartFrame
+            && liveSourceView.TryGetVisibleScreenCrossing(liveLastSourcePosition, sourcePose.position, out _, out _))
+        {
+            EndLivePortalTransferOnSourceSide(sourcePose);
+            return;
+        }
+
+        ApplyMappedPose(liveSourceView, liveTargetView, sourcePose);
+        liveLastSourcePosition = sourcePose.position;
+    }
+
+    private void ApplyLivePortalTransferPose()
+    {
+        if (liveSourceView == null || liveTargetView == null)
+            return;
+
+        if (!TryGetCurrentGrabSourcePose(out Pose sourcePose))
+            return;
+
+        ApplyMappedPose(liveSourceView, liveTargetView, sourcePose);
+    }
+
+    private void EndLivePortalTransferOnSourceSide(Pose sourcePose)
+    {
+        SpatialView sourceView = liveSourceView;
+        SpatialView targetView = liveTargetView;
+
+        if (liveAppliedScale)
+            ApplyMappingScale(1f / Mathf.Max(0.0001f, liveScaleMultiplier));
+
+        ApplyPose(sourcePose.position, sourcePose.rotation);
+        ClearLivePortalTransfer();
+
+        fromView = sourceView;
+        toView = targetView;
+
+        if (sourceView != null)
+            sourceView.OnTravellerEnterView(this);
+
+        lastPos = sourcePose.position;
+    }
+
+    private void ApplyMappedPose(SpatialView sourceView, SpatialView targetView, Pose sourcePose)
+    {
+        Vector3 mappedPosition = sourceView.MapPointTo(targetView, sourcePose.position);
+        Quaternion mappedRotation = sourceView.MapRotationTo(targetView, sourcePose.rotation);
+        ApplyPose(mappedPosition, mappedRotation);
+    }
+
+    private void ApplyPose(Vector3 position, Quaternion rotation)
+    {
+        transform.SetPositionAndRotation(position, rotation);
+        rb.position = position;
+        rb.rotation = rotation;
+        Physics.SyncTransforms();
+    }
+
+    private bool TryGetCurrentGrabSourcePose(out Pose sourcePose)
+    {
+        sourcePose = new Pose(transform.position, transform.rotation);
+
+        if (!TryGetPrimaryInteractorAttach(out Transform attachTransform))
+            return false;
+
+        sourcePose = new Pose(
+            attachTransform.TransformPoint(grabLocalPosition),
+            attachTransform.rotation * grabLocalRotation);
+
+        return true;
+    }
+
+    private bool TryGetPrimaryInteractorAttach(out Transform attachTransform)
+    {
+        attachTransform = null;
+
+        if (grabInteractable == null || !grabInteractable.isSelected)
+            return false;
+
+        if (!hasGrabPose
+            || primaryGrabInteractor == null
+            || !primaryGrabInteractor.IsSelecting(grabInteractable))
+        {
+            if (grabInteractable.interactorsSelecting.Count == 0)
+                return false;
+
+            CaptureGrabPose(grabInteractable.interactorsSelecting[0]);
+        }
+
+        if (primaryGrabInteractor == null)
+            return false;
+
+        attachTransform = primaryGrabInteractor.GetAttachTransform(grabInteractable);
+        return attachTransform != null;
+    }
+
+    private void CaptureGrabPose(IXRSelectInteractor interactor)
+    {
+        primaryGrabInteractor = interactor;
+        hasGrabPose = false;
+
+        if (grabInteractable == null || primaryGrabInteractor == null)
+            return;
+
+        Transform attachTransform = primaryGrabInteractor.GetAttachTransform(grabInteractable);
+
+        if (attachTransform == null)
+            return;
+
+        grabLocalPosition = attachTransform.InverseTransformPoint(transform.position);
+        grabLocalRotation = Quaternion.Inverse(attachTransform.rotation) * transform.rotation;
+        hasGrabPose = true;
+    }
+
+    private void ClearGrabPose()
+    {
+        primaryGrabInteractor = null;
+        hasGrabPose = false;
+        grabLocalPosition = Vector3.zero;
+        grabLocalRotation = Quaternion.identity;
+    }
+
+    private void ClearLivePortalTransfer()
+    {
+        RestoreGrabTracking();
+        isPortalTransferActive = false;
+        liveSourceView = null;
+        liveTargetView = null;
+        liveLastSourcePosition = Vector3.zero;
+        liveTransferStartFrame = -1;
+        liveScaleMultiplier = 1f;
+        liveAppliedScale = false;
+        markedForTeleport = false;
+        grabRayHasHit = false;
+    }
+
+    private void SaveAndDisableGrabTracking()
+    {
+        if (grabInteractable == null || hasSavedGrabTrackingSettings)
+            return;
+
+        savedTrackPosition = grabInteractable.trackPosition;
+        savedTrackRotation = grabInteractable.trackRotation;
+        hasSavedGrabTrackingSettings = true;
+
+        grabInteractable.trackPosition = false;
+        grabInteractable.trackRotation = false;
+    }
+
+    private void RestoreGrabTracking()
+    {
+        if (grabInteractable == null || !hasSavedGrabTrackingSettings)
+            return;
+
+        grabInteractable.trackPosition = savedTrackPosition;
+        grabInteractable.trackRotation = savedTrackRotation;
+        hasSavedGrabTrackingSettings = false;
+    }
+
+    private void RefreshReleasedObjectTracking()
+    {
+        SpatialView sourceView = fromView;
+        fromView = null;
+        toView = null;
+        markedForTeleport = false;
+        grabRayHasHit = false;
+
+        if (sourceView == null || sourceView.isEndpoint)
+            return;
+
+        sourceView.ReleaseTraveller(this);
+        StartCoroutine(TrackReleasedObjectFromViewNextFrame(sourceView));
+    }
+
+    private IEnumerator TrackReleasedObjectFromViewNextFrame(SpatialView spatialView)
+    {
+        yield return null;
+
+        if (spatialView == null || spatialView.isEndpoint || !spatialView.ContainsEnterColliderPoint(transform.position))
+            yield break;
+
+        fromView = spatialView;
+        toView = spatialView.linkedView;
+        spatialView.OnTravellerEnterView(this);
     }
 
     /// <summary>
