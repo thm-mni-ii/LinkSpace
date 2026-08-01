@@ -23,6 +23,9 @@ public class SpatialViewInspector : Editor
 
     private SerializedProperty onObjectTravel;
 
+    private SerializedProperty maxRecursionDepth;
+    private SerializedProperty recursionTextureScale;
+
     private SerializedProperty nearClipOffset;
     private SerializedProperty nearClipLimit;
 
@@ -33,6 +36,7 @@ public class SpatialViewInspector : Editor
     private bool foldNavigation = true;
     private bool foldObjectTravel = true;
     private bool foldEvents = true;
+    private bool foldRecursion = true;
     private bool foldAdvanced = true;
 
     private void OnEnable()
@@ -62,6 +66,10 @@ public class SpatialViewInspector : Editor
         // Events
         onObjectTravel = serializedObject.FindProperty("onObjectTravel");
 
+        // Recursion
+        maxRecursionDepth = serializedObject.FindProperty("maxRecursionDepth");
+        recursionTextureScale = serializedObject.FindProperty("recursionTextureScale");
+
         // Advanced
         nearClipOffset = serializedObject.FindProperty("nearClipOffset");
         nearClipLimit = serializedObject.FindProperty("nearClipLimit");
@@ -77,6 +85,7 @@ public class SpatialViewInspector : Editor
         DrawNavigation();
         DrawObjectTravel();
         DrawEvents();
+        DrawRecursion();
         DrawAdvancedSettings();
 
         serializedObject.ApplyModifiedProperties();
@@ -170,6 +179,18 @@ public class SpatialViewInspector : Editor
         if (foldEvents)
         {
             EditorGUILayout.PropertyField(onObjectTravel);
+        }
+        EditorGUILayout.EndFoldoutHeaderGroup();
+        EditorGUILayout.Space();
+    }
+
+    private void DrawRecursion()
+    {
+        foldRecursion = EditorGUILayout.BeginFoldoutHeaderGroup(foldRecursion, "Recursion");
+        if (foldRecursion)
+        {
+            EditorGUILayout.PropertyField(maxRecursionDepth);
+            EditorGUILayout.PropertyField(recursionTextureScale);
         }
         EditorGUILayout.EndFoldoutHeaderGroup();
         EditorGUILayout.Space();

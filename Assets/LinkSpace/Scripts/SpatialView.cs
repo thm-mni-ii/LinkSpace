@@ -56,6 +56,16 @@ public class SpatialView : MonoBehaviour
     [Header("Unity Events")]
     [Tooltip("Event that is triggered when an Object travels through the SpatialView")]
     public UnityEvent<SpatialTraveller> onObjectTravel;
+
+    [Header("Recursion")]
+    [Tooltip("How many times the spatialView view is rendered recursively. Higher values look better but cost more GPU.")]
+    [Range(1, 5)]
+    public int maxRecursionDepth = 3;
+
+    [Tooltip("Scales recursive render texture resolution. Lower values improve performance at the cost of portal image sharpness.")]
+    [Range(0.25f, 1f)]
+    public float recursionTextureScale = 1f;
+
     [Header("Advanced Settings")]
     [Tooltip("Offset used for near clipping plane calculations.")]
     public float nearClipOffset = 0.05f;
@@ -67,12 +77,18 @@ public class SpatialView : MonoBehaviour
 
     #region Private Variables
 
+    private const int RecursionTextureBufferCount = 2;
+    private static readonly int LeftEyeTexId = Shader.PropertyToID("_LeftEyeTex");
+    private static readonly int RightEyeTexId = Shader.PropertyToID("_RightEyeTex");
+    private static readonly int DisplayMaskId = Shader.PropertyToID("displayMask");
+
     private Camera viewCam;
     private Camera playerCam;
     private List<SpatialTraveller> trackedTravellers;
     private MeshFilter screenMeshFilter;
-    private RenderTexture viewTextureLeft;
-    private RenderTexture viewTextureRight;
+    private RenderTexture[] viewTexturesLeft;
+    private RenderTexture[] viewTexturesRight;
+    private int outerTextureSlot = -1;
 
     [HideInInspector]
     public Collider enterCollider;
@@ -80,6 +96,16 @@ public class SpatialView : MonoBehaviour
     private Vector3 prevViewPos;
     private Quaternion prevViewRot;
     private bool warnedNonUniformMappingScale;
+
+    private struct ScreenRenderState
+    {
+        public MeshRenderer renderer;
+        public Texture leftEyeTexture;
+        public Texture rightEyeTexture;
+        public int displayMask;
+        public ShadowCastingMode shadowCastingMode;
+        public bool rendererEnabled;
+    }
 
     #endregion
 
@@ -115,7 +141,7 @@ public class SpatialView : MonoBehaviour
             playerCam = Camera.main;
             trackedTravellers = new List<SpatialTraveller>();
             screenMeshFilter = screen.GetComponent<MeshFilter>();
-            screen.meshRenderer.material.SetInt("displayMask", 1);
+            screen.meshRenderer.material.SetInt(DisplayMaskId, 1);
             enterCollider = GetComponent<Collider>();
             screen.spatialView = this;
         }
@@ -151,6 +177,8 @@ public class SpatialView : MonoBehaviour
 
     void OnValidate()
     {
+        maxRecursionDepth = Mathf.Max(1, maxRecursionDepth);
+        recursionTextureScale = Mathf.Clamp(recursionTextureScale, 0.25f, 1f);
         if (linkedView != null) linkedView.linkedView = this;
         BoxCollider box = GetComponent<BoxCollider>();
         box.isTrigger = true;
@@ -424,30 +452,92 @@ public class SpatialView : MonoBehaviour
     /// </summary>
     void RenderSpatialView(Camera mainCam)
     {
+        if (screen == null || screen.meshRenderer == null) return;
+
+        if (!linkedView || linkedView == this)
+        {
+            outerTextureSlot = -1;
+            SetScreenFallback();
+            return;
+        }
+
         CreateViewTextures();
+        if (!HasViewTextures()) return;
 
-        if (!linkedView)
+        ScreenRenderState linkedScreenState = linkedView.CaptureScreenState();
+        linkedView.HideScreenForViewRender();
+
+        try
         {
-            ClearRenderTexture(viewTextureLeft);
-            ClearRenderTexture(viewTextureRight);
-            return;
+            if (mainCam.stereoEnabled)
+                RenderRecursiveStereo(mainCam);
+            else
+                RenderRecursiveMono(mainCam);
         }
-
-        if (!mainCam.stereoEnabled)
+        finally
         {
-            RenderMono(viewTextureLeft, mainCam);
-            RenderMono(viewTextureRight, mainCam);
+            linkedView.RestoreScreenState(linkedScreenState);
             ResetViewCamera(mainCam);
-            return;
         }
-
-        RenderEye(Camera.StereoscopicEye.Left, viewTextureLeft, mainCam);
-        RenderEye(Camera.StereoscopicEye.Right, viewTextureRight, mainCam);
-
-        ResetViewCamera(mainCam);
     }
     /// <summary>
-    /// Creates or updates render textures for spatialView camera eyes.
+    /// Renders stereo recursion with two ping-pong texture pairs.
+    /// </summary>
+    private void RenderRecursiveStereo(Camera mainCam)
+    {
+        int previousSlot = -1;
+
+        for (int level = GetRecursionDepth() - 1; level >= 0; level--)
+        {
+            int renderSlot = GetTextureSlot(level);
+            int steps = level + 1;
+
+            if (previousSlot < 0)
+                SetScreenFallback();
+            else
+                SetScreenTexture(viewTexturesLeft[previousSlot], viewTexturesLeft[previousSlot]);
+
+            RenderEye(Camera.StereoscopicEye.Left, viewTexturesLeft[renderSlot], mainCam, steps);
+
+            if (previousSlot < 0)
+                SetScreenFallback();
+            else
+                SetScreenTexture(viewTexturesRight[previousSlot], viewTexturesRight[previousSlot]);
+
+            RenderEye(Camera.StereoscopicEye.Right, viewTexturesRight[renderSlot], mainCam, steps);
+
+            previousSlot = renderSlot;
+        }
+
+        outerTextureSlot = previousSlot;
+        RestoreScreenTextures();
+    }
+    /// <summary>
+    /// Renders mono recursion with the left ping-pong buffer and mirrors it to both material eyes.
+    /// </summary>
+    private void RenderRecursiveMono(Camera mainCam)
+    {
+        int previousSlot = -1;
+
+        for (int level = GetRecursionDepth() - 1; level >= 0; level--)
+        {
+            int renderSlot = GetTextureSlot(level);
+            int steps = level + 1;
+
+            if (previousSlot < 0)
+                SetScreenFallback();
+            else
+                SetScreenTexture(viewTexturesLeft[previousSlot], viewTexturesLeft[previousSlot]);
+
+            RenderMono(viewTexturesLeft[renderSlot], mainCam, steps);
+            previousSlot = renderSlot;
+        }
+
+        outerTextureSlot = previousSlot;
+        RestoreScreenTextures();
+    }
+    /// <summary>
+    /// Creates or resizes the two ping-pong texture pairs used by all recursion depths.
     /// </summary>
     private void CreateViewTextures()
     {
@@ -456,71 +546,165 @@ public class SpatialView : MonoBehaviour
         int width = XRSettings.eyeTextureWidth;
         int height = XRSettings.eyeTextureHeight;
 
-        // Fallback, falls XR noch nicht aktiv ist
         if (width <= 0 || height <= 0)
         {
             width = Mathf.Max(1, Screen.width);
             height = Mathf.Max(1, Screen.height);
         }
 
-        if (viewTextureLeft == null || viewTextureLeft.width != width || viewTextureLeft.height != height)
-        {
-            if (viewTextureLeft != null)
-            {
-                viewTextureLeft.Release();
-                Destroy(viewTextureLeft);
-            }
+        width = Mathf.Max(1, Mathf.RoundToInt(width * recursionTextureScale));
+        height = Mathf.Max(1, Mathf.RoundToInt(height * recursionTextureScale));
 
-            viewTextureLeft = new RenderTexture(width, height, 24)
-            {
-                name = "LinkSpace View Texture Left",
-                antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing)
-            };
-            viewTextureLeft.Create();
+        if (viewTexturesLeft == null || viewTexturesLeft.Length != RecursionTextureBufferCount)
+        {
+            ReleaseViewTextures();
+            viewTexturesLeft = new RenderTexture[RecursionTextureBufferCount];
+            viewTexturesRight = new RenderTexture[RecursionTextureBufferCount];
         }
 
-        if (viewTextureRight == null || viewTextureRight.width != width || viewTextureRight.height != height)
+        for (int i = 0; i < RecursionTextureBufferCount; i++)
         {
-            if (viewTextureRight != null)
-            {
-                viewTextureRight.Release();
-                Destroy(viewTextureRight);
-            }
-
-            viewTextureRight = new RenderTexture(width, height, 24)
-            {
-                name = "LinkSpace View Texture Right",
-                antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing)
-            };
-            viewTextureRight.Create();
+            viewTexturesLeft[i] = CreateOrResizeViewTexture(viewTexturesLeft[i], width, height, $"LinkSpace View Texture Left {i + 1}");
+            viewTexturesRight[i] = CreateOrResizeViewTexture(viewTexturesRight[i], width, height, $"LinkSpace View Texture Right {i + 1}");
         }
-
-        screen.meshRenderer.material.SetTexture("_LeftEyeTex", viewTextureLeft);
-        screen.meshRenderer.material.SetTexture("_RightEyeTex", viewTextureRight);
     }
 
     /// <summary>
-    /// Release view textures.
+    /// Creates or updates a single render texture.
+    /// </summary>
+    private RenderTexture CreateOrResizeViewTexture(RenderTexture renderTexture, int width, int height, string textureName)
+    {
+        if (renderTexture != null && renderTexture.width == width && renderTexture.height == height)
+            return renderTexture;
+
+        if (renderTexture != null)
+            ReleaseViewTexture(renderTexture);
+
+        renderTexture = new RenderTexture(width, height, 24)
+        {
+            name = textureName,
+            antiAliasing = Mathf.Max(1, QualitySettings.antiAliasing),
+            useMipMap = false,
+            autoGenerateMips = false
+        };
+        renderTexture.Create();
+        return renderTexture;
+    }
+
+    /// <summary>
+    /// Release all recursion render textures.
     /// </summary>
     private void ReleaseViewTextures()
     {
-        if (viewTextureLeft != null)
+        if (viewTexturesLeft != null)
         {
-            viewTextureLeft.Release();
-            Destroy(viewTextureLeft);
-            viewTextureLeft = null;
+            foreach (RenderTexture renderTexture in viewTexturesLeft)
+                ReleaseViewTexture(renderTexture);
         }
-        if (viewTextureRight != null)
+
+        if (viewTexturesRight != null)
         {
-            viewTextureRight.Release();
-            Destroy(viewTextureRight);
-            viewTextureRight = null;
+            foreach (RenderTexture renderTexture in viewTexturesRight)
+                ReleaseViewTexture(renderTexture);
         }
+
+        viewTexturesLeft = null;
+        viewTexturesRight = null;
+        outerTextureSlot = -1;
+    }
+    /// <summary>
+    /// Releases a single render texture if it exists.
+    /// </summary>
+    private void ReleaseViewTexture(RenderTexture renderTexture)
+    {
+        if (renderTexture == null) return;
+
+        renderTexture.Release();
+        Destroy(renderTexture);
+    }
+    /// <summary>
+    /// Sets this spatialView's screen to display the given textures.
+    /// </summary>
+    public void SetScreenTexture(Texture left, Texture right)
+    {
+        if (screen == null || screen.meshRenderer == null || isEndpoint) return;
+
+        Material material = screen.meshRenderer.material;
+        material.SetTexture(LeftEyeTexId, left != null ? left : Texture2D.blackTexture);
+        material.SetTexture(RightEyeTexId, right != null ? right : Texture2D.blackTexture);
+        material.SetInt(DisplayMaskId, 1);
+        screen.meshRenderer.enabled = true;
+        screen.meshRenderer.shadowCastingMode = ShadowCastingMode.On;
+    }
+    /// <summary>
+    /// Shows the inactive screen color without sampling any recursion render texture.
+    /// </summary>
+    public void SetScreenFallback()
+    {
+        if (screen == null || screen.meshRenderer == null || isEndpoint) return;
+
+        Material material = screen.meshRenderer.material;
+        material.SetTexture(LeftEyeTexId, Texture2D.blackTexture);
+        material.SetTexture(RightEyeTexId, Texture2D.blackTexture);
+        material.SetInt(DisplayMaskId, 0);
+        screen.meshRenderer.enabled = true;
+        screen.meshRenderer.shadowCastingMode = ShadowCastingMode.On;
+    }
+    /// <summary>
+    /// Restores this spatialView's screen to its own outermost rendered texture.
+    /// </summary>
+    public void RestoreScreenTextures()
+    {
+        if (!HasViewTextures() || screen == null || isEndpoint || outerTextureSlot < 0) return;
+
+        SetScreenTexture(viewTexturesLeft[outerTextureSlot], viewTexturesRight[outerTextureSlot]);
+    }
+    /// <summary>
+    /// Captures the current screen material and renderer state.
+    /// </summary>
+    private ScreenRenderState CaptureScreenState()
+    {
+        ScreenRenderState state = new ScreenRenderState();
+
+        if (screen == null || screen.meshRenderer == null)
+            return state;
+
+        Material material = screen.meshRenderer.material;
+        state.renderer = screen.meshRenderer;
+        state.leftEyeTexture = material.GetTexture(LeftEyeTexId);
+        state.rightEyeTexture = material.GetTexture(RightEyeTexId);
+        state.displayMask = material.GetInt(DisplayMaskId);
+        state.shadowCastingMode = screen.meshRenderer.shadowCastingMode;
+        state.rendererEnabled = screen.meshRenderer.enabled;
+        return state;
+    }
+    /// <summary>
+    /// Restores a previously captured screen material and renderer state.
+    /// </summary>
+    private void RestoreScreenState(ScreenRenderState state)
+    {
+        if (state.renderer == null) return;
+
+        Material material = state.renderer.material;
+        material.SetTexture(LeftEyeTexId, state.leftEyeTexture);
+        material.SetTexture(RightEyeTexId, state.rightEyeTexture);
+        material.SetInt(DisplayMaskId, state.displayMask);
+        state.renderer.shadowCastingMode = state.shadowCastingMode;
+        state.renderer.enabled = state.rendererEnabled;
+    }
+    /// <summary>
+    /// Hides this screen as geometry while another spatialView renders through it.
+    /// </summary>
+    private void HideScreenForViewRender()
+    {
+        if (screen == null || screen.meshRenderer == null || isEndpoint) return;
+
+        screen.meshRenderer.enabled = false;
     }
     /// <summary>
     /// Renders a single eye of the spatialView view into the given render texture.
     /// </summary>
-    private void RenderEye(Camera.StereoscopicEye eye, RenderTexture target, Camera mainCam)
+    private void RenderEye(Camera.StereoscopicEye eye, RenderTexture target, Camera mainCam, int steps)
     {
         if (!linkedView || target == null) return;
 
@@ -531,17 +715,12 @@ public class SpatialView : MonoBehaviour
         Vector3 eyeWorldPos = mainCam.GetStereoViewMatrix(eye).inverse.MultiplyPoint(Vector3.zero);
         Quaternion eyeWorldRot = mainCam.transform.rotation;
 
-        PositionViewCamera(linkedView, eyeWorldPos, eyeWorldRot);
-
-        SetLinkedViewVisible(false);
-        SetNearClipPlaneVR(linkedView.transform);
-        viewCam.Render();
-        SetLinkedViewVisible(true);
+        RenderFromVirtualView(target, mainCam, eyeWorldPos, eyeWorldRot, steps);
     }
     /// <summary>
     /// Renders the spatialView from a regular non-XR camera.
     /// </summary>
-    private void RenderMono(RenderTexture target, Camera mainCam)
+    private void RenderMono(RenderTexture target, Camera mainCam, int steps)
     {
         if (!linkedView || target == null) return;
 
@@ -549,12 +728,17 @@ public class SpatialView : MonoBehaviour
         viewCam.projectionMatrix = mainCam.projectionMatrix;
         viewCam.targetTexture = target;
 
-        PositionViewCamera(linkedView, mainCam.transform.position, mainCam.transform.rotation);
-
-        SetLinkedViewVisible(false);
+        RenderFromVirtualView(target, mainCam, mainCam.transform.position, mainCam.transform.rotation, steps);
+    }
+    /// <summary>
+    /// Positions the virtual camera, clears the target and renders one recursion level.
+    /// </summary>
+    private void RenderFromVirtualView(RenderTexture target, Camera mainCam, Vector3 sourcePosition, Quaternion sourceRotation, int steps)
+    {
+        PositionViewCamera(linkedView, sourcePosition, sourceRotation, steps);
+        ClearRenderTexture(target, mainCam.backgroundColor);
         SetNearClipPlaneVR(linkedView.transform);
         viewCam.Render();
-        SetLinkedViewVisible(true);
     }
     /// <summary>
     /// Copies render settings that should match the player camera for portal renders.
@@ -563,34 +747,39 @@ public class SpatialView : MonoBehaviour
     {
         viewCam.CopyFrom(source);
         viewCam.enabled = false;
+        viewCam.forceIntoRenderTexture = true;
+        viewCam.stereoTargetEye = StereoTargetEyeMask.None;
+
+        if (viewCam.clearFlags == CameraClearFlags.Nothing || viewCam.clearFlags == CameraClearFlags.Depth)
+            viewCam.clearFlags = CameraClearFlags.SolidColor;
     }
     /// <summary>
     /// Positions the spatialView camera relative to the linked spatialView.
     /// </summary>
-    private void PositionViewCamera(SpatialView targetView, Vector3 sourcePosition, Quaternion sourceRotation)
+    private void PositionViewCamera(SpatialView targetView, Vector3 sourcePosition, Quaternion sourceRotation, int steps)
     {
-        viewCam.transform.position = MapPointTo(targetView, sourcePosition);
-        viewCam.transform.rotation = MapRotationTo(targetView, sourceRotation);
+        Vector3 viewPosition = sourcePosition;
+        Quaternion viewRotation = sourceRotation;
+        int depth = Mathf.Max(1, steps);
+
+        for (int i = 0; i < depth; i++)
+        {
+            viewPosition = MapPointTo(targetView, viewPosition);
+            viewRotation = MapRotationTo(targetView, viewRotation);
+        }
+
+        viewCam.transform.SetPositionAndRotation(viewPosition, viewRotation);
     }
     /// <summary>
     /// Clears temporary render state from the spatialView camera.
     /// </summary>
     private void ResetViewCamera(Camera mainCam)
     {
+        if (viewCam == null) return;
+
         viewCam.targetTexture = null;
         viewCam.projectionMatrix = mainCam.projectionMatrix;
         viewCam.ResetProjectionMatrix();
-    }
-    /// <summary>
-    /// Toggles visibility of the linked spatialView screen for rendering.
-    /// </summary>
-    private void SetLinkedViewVisible(bool visible)
-    {
-        if (linkedView.screen == null || linkedView.isEndpoint) return;
-
-        linkedView.screen.meshRenderer.material.SetInt("displayMask", visible ? 1 : 0);
-        linkedView.screen.meshRenderer.shadowCastingMode =
-            visible ? ShadowCastingMode.On : ShadowCastingMode.ShadowsOnly;
     }
     /// <summary>
     /// Clears a render texture with an optional background color.
@@ -600,10 +789,38 @@ public class SpatialView : MonoBehaviour
         if (renderTexture == null) return;
         Color colToUse = backGroundColor ?? Color.black;
 
-        var oldRT = RenderTexture.active;
+        RenderTexture oldRT = RenderTexture.active;
         RenderTexture.active = renderTexture;
         GL.Clear(true, true, colToUse);
         RenderTexture.active = oldRT;
+    }
+    /// <summary>
+    /// Returns true when both eye texture arrays contain the ping-pong buffers.
+    /// </summary>
+    private bool HasViewTextures()
+    {
+        return viewTexturesLeft != null
+            && viewTexturesRight != null
+            && viewTexturesLeft.Length == RecursionTextureBufferCount
+            && viewTexturesRight.Length == RecursionTextureBufferCount
+            && viewTexturesLeft[0] != null
+            && viewTexturesRight[0] != null
+            && viewTexturesLeft[1] != null
+            && viewTexturesRight[1] != null;
+    }
+    /// <summary>
+    /// Returns the active recursion depth, clamped to a valid runtime value.
+    /// </summary>
+    private int GetRecursionDepth()
+    {
+        return Mathf.Max(1, maxRecursionDepth);
+    }
+    /// <summary>
+    /// Returns the ping-pong render slot used for a recursion level.
+    /// </summary>
+    private int GetTextureSlot(int recursionLevel)
+    {
+        return Mathf.Abs(recursionLevel) % RecursionTextureBufferCount;
     }
     /// <summary>
     /// Adjusts the spatialView camera's near clip plane to avoid clipping geometry.
