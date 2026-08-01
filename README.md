@@ -1,169 +1,236 @@
-# How To: LinkSpace Installieren
+# LinkSpace
 
-## 1. Neues Projekt anlegen
-- Waehle eine aktuelle Unity-Version. Version **6000.3.5f** ist getestet.
-- Waehle ausserdem das **Universal 3D Template**.
-- Alternativ kannst du auch ein bestehendes Projekt verwenden.
+LinkSpace is a Unity XR prototype for linked SpatialViews. A SpatialView is a
+rendered, walkable view surface that can be linked to another SpatialView so
+players, rays, grabbed objects, and moving rigidbodies can be mapped between
+the two spaces.
 
-![](Images/CreateScreen.png)
+The current project terminology is SpatialView-based. User-facing setup and
+scene objects should be named SpatialView, SpatialView Screen,
+SpatialTraveller, and LinkSpace.
 
----
+## Current Setup
 
-## 2. XR Plugin Management
+This repository is currently configured for:
 
-- Oeffne `Edit -> Project Settings -> XR Plugin Management`.
-- Klicke **Install XR Plugin Management**.
-- Aktiviere OpenXR als Plug-in Provider.
-- Klicke **Fix All** unter `XR Plug-in Management -> Project Validation`.
-- Aktiviere unter `XR Plug-in Management -> OpenXR -> Enabled Interaction Profiles` das **Oculus Touch Controller Profile**.
+- Unity `6000.4.7f1`
+- Universal Render Pipeline `17.4.0`
+- Input System `1.19.0`
+- XR Interaction Toolkit `3.4.1`
+- XR Management `4.5.4`
+- OpenXR `1.16.1`
+- Meta Quest style controller bindings in the demo scene
 
-## 3. XR Interaction Toolkit
-1. Oeffne den **Package Manager** unter `Window -> Package Manager`.
+Open the project folder directly in Unity Hub. The main demo scene is:
 
-![](Images/PackageManager.png)
+`Assets/LinkSpace/Demo/SampleScene.unity`
 
-2. Installiere die folgenden Packages:
-   - **XR Interaction Toolkit** - Version **3.3.1** ist getestet.
-     ![](Images/XRToolkit.png)
-   - **XR Toolkit Starter Assets** - importiere die Starter Assets.
-     ![](Images/starterAssests.png)
+Useful prefabs:
 
----
+- `Assets/LinkSpace/Demo/Prefabs/Spatial View.prefab`
+- `Assets/LinkSpace/Demo/Prefabs/Grab Interactable.prefab`
+- `Assets/LinkSpace/Demo/XR Origin LinkSpace Demo (XR Rig).prefab`
+- `Assets/LinkSpace/Prefabs/XR Origin LinkSpace (XR Rig).prefab`
 
-## 4. Bestehende Validation Issues beheben
-- Gehe zu `Project Settings -> Project Validation` und behebe vorhandene Issues.
-- Meist reicht ein Klick auf **Fix All**.
+## Setup Check
 
-![](Images/FixIssues.png)
+After opening or importing LinkSpace into another project, check these items:
 
----
+1. Use Unity `6000.4.7f1` or a compatible Unity 6 version.
+2. Use the Universal 3D/URP project setup.
+3. Install/enable XR Plugin Management and OpenXR.
+4. In `Project Settings -> XR Plug-in Management -> Project Validation`, run
+   `Fix All` where appropriate.
+5. Ensure the OpenXR interaction profiles for your target headset/controllers
+   are enabled. The demo is configured around Quest-style controllers.
+6. Install XR Interaction Toolkit and import the Starter Assets if you are
+   building a fresh project.
+7. Run `Tools -> LinkSpace -> Run Layer Setup`.
+8. Verify `Project Settings -> Tags and Layers` contains `SpatialViewScreen`.
+9. Verify `Project Settings -> Physics` has collisions disabled for the
+   `SpatialViewScreen` layer. The visible SpatialView surface is queried by
+   raycasts and movement segments; it should not physically block travellers.
 
-## 5. LinkSpace Package importieren
-- Lade das `LinkSpace.unitypackage` herunter und doppelklicke es zum Importieren.
-- Importiere **alle Dateien**.
+The repository already contains the expected packages, layer name, and OpenXR
+settings. The setup check matters most when copying LinkSpace into a new Unity
+project or after Unity rewrites project settings.
 
-![](Images/LinkSpacePackage.png)
+## Core Concepts
 
----
+`SpatialView`
+: Main component for a linked view. It renders what the linked SpatialView sees,
+tracks travellers near the view, maps positions/rotations/directions/velocities,
+and performs traversal.
 
-## 6. Layer pruefen
-- Pruefe die **Layer Collision Matrix** unter `Physics -> Settings`.
-- Stelle sicher, dass der Layer **SpatialViewScreen** enthalten ist und keine Kollision mit anderen Layern hat.
-- Achtung: Manchmal wird die Layer-Matrix komplett ueberschrieben.
-- Wenn kein Haken zwischen irgendwelchen Layern gesetzt ist, bitte korrigieren.
-- Wenn der Layer **SpatialViewScreen** nicht existiert, lege ihn unter `Tags and Layers` auf `User Layer 6` an.
-- Die Matrix sollte am Ende wie im Bild aussehen:
+`SpatialViewScreen`
+: Child object representing the visible screen surface. Its collider lives on
+the `SpatialViewScreen` layer. Screen crossing and far interaction are based on
+this surface, not on the broad root trigger.
 
-![](Images/LayerMatrix.png)
+`SpatialTraveller`
+: Base component for objects that can be represented and transferred through a
+SpatialView. It manages graphics clones and slicing visuals.
 
----
+`PlayerSpatialTraveller`
+: Traveller used by the XR Origin/player. It maps the player by the teleport
+origin/camera setup rather than by a simple object center.
 
-## 7. Szene vorbereiten
+`GrabSpatialTraveller`
+: Traveller used by grabbable rigidbody objects, such as the demo cube. It
+supports XR grabbing, visible screen crossing while grabbed, ungrabbed
+rigidbody transfer, velocity mapping, and visual clone handling.
 
-- Oeffne `Assets/LinkSpace/Demo/SampleScene.unity`.
-- Klicke auf ein GameObject mit `SpatialView`-Komponente und verlinke eine andere Spatial View als `Linked View`.
+`LinkSpaceManager`
+: Runtime helper for creating, destroying, moving, rotating, linking, and
+unlinking SpatialViews.
 
----
+`LinkSpaceRayInteractor`
+: XR ray interactor extension for teleport rays through SpatialViews.
 
-## 8. Demo-Scene starten und testen
-- Starte die **Demo Scene** und pruefe, ob alles funktioniert.
+`LinkSpaceNearFarInteractor`
+: Near/far interactor extension for selecting interactables through
+SpatialViews. While holding a `GrabSpatialTraveller`, the curved far ray visual
+is hidden to avoid misleading rays after object transfer.
 
----
+## SpatialView Setup
 
-# How To: Eigene Spatial View erstellen
+The easiest starting point is `Spatial View.prefab`.
 
-## 1. Spatial-View-Objekt der Szene hinzufuegen
-- Fuege beispielsweise einen Wuerfel oder ein eigenes Objekt der Szene hinzu.
-- **Achtung:** Die Teleportationsebene orientiert sich immer an der **lokalen Z-Achse** des Objekts.
-  Daher sollte die Z-Achse die **flache Achse** des Objekts sein.
+For a custom SpatialView:
 
-![](Images/SpatialViewObject.png)
+1. Add a GameObject that defines the view plane.
+2. Add the `SpatialView` component.
+3. Either enable `Use Mesh As Screen` and assign
+   `Assets/LinkSpace/Materials/Spatial View Screen.mat`, or assign an existing
+   child `SpatialViewScreen`.
+4. Make sure the visible screen is thin and lies on the intended local surface.
+5. Link two SpatialViews through `Linked View`, or call
+   `LinkSpaceManager.LinkSpatialViews(viewA, viewB)`.
 
----
+Important orientation rule: traversal is based on the SpatialView's local
+Z-axis. The flat visible surface should be perpendicular to local Z, and the
+screen bounds should match the visible area.
 
-## 2. SpatialView-Script hinzufuegen
-- Fuege dem Objekt das **SpatialView-Script** hinzu.
+## Collider Model
 
-![](Images/SpatialViewScript.png)
+There are two different collider roles:
 
-- Achte darauf:
-  - Der Haken bei `Use Mesh As Screen` ist gesetzt.
-  - Das Feld `Screen Material` enthaelt das Material **Spatial View Screen**.
+- The root `BoxCollider` on `SpatialView` is a trigger used as a small tracking
+  volume for nearby travellers, visuals, and player proximity. In the demo
+  prefab it is intentionally shallow on Z.
+- The child `Screen` collider on `SpatialViewScreen` represents the actual
+  visible crossing surface. Object transfer checks the movement segment against
+  this screen surface.
 
-![](Images/ImportantSettings.png)
+Do not make the root trigger a huge volume to "catch" objects. It can cause
+confusing late tracking. Keep it close to the SpatialView. Do not remove it
+unless the tracking code is also replaced, because `SpatialView` still uses it
+for threshold tracking.
 
-- Alternativ koennen auch komplexere Objekte angelegt werden.
-  Orientiere dich hierbei an der **Demo Spatial View**.
+## Object Travel
 
----
+`SpatialView.travelMode` controls object behavior:
 
-## 3. Collider anpassen
-- Passe den **Collider** des Objekts so an, dass ein grosszuegiger Bereich vor und hinter der Spatial View eingeschlossen wird.
-- Dieser Bereich dient als **Trigger**, um durchquerende Objekte zu erfassen.
+- `None`: no object traversal.
+- `Traversation`: objects transfer when they cross the visible screen.
+- `Raycast`: grabbed objects can be prepared by a grab ray, and moving objects
+  still transfer by visible screen crossing.
 
-![](Images/Collider.png)
+The current object-transfer path is designed around the actual screen crossing:
 
----
+- Grabbed cubes start a live transfer when their held pose crosses the
+  `SpatialViewScreen` surface.
+- Ungrabbed rigidbodies check their previous and current physics positions in
+  `FixedUpdate`, so fast objects transfer when their movement segment crosses
+  the visible screen, not later at the end of the root trigger.
+- Linear and angular velocity are mapped to the linked SpatialView.
+- Screen collisions are ignored for `GrabSpatialTraveller` objects so the screen
+  can be crossed instead of acting as a physical wall.
+- Visual clones and slicing are only visual aids; the object should have one
+  authoritative physical position.
 
-# How To: Eigenen Spatial Traveller erstellen
+For grabbable objects, use `Grab Interactable.prefab` or add:
 
-## 1. Objekt der Szene hinzufuegen
-- Fuege beispielsweise einen Wuerfel oder ein eigenes Objekt der Szene hinzu.
+1. `Rigidbody`
+2. `XRGrabInteractable`
+3. `GrabSpatialTraveller`
+4. A collider on the physical object
+5. `Graphics Object` assigned to the visible mesh hierarchy
 
-![](Images/Traveller.png)
+## Mapping Scale
 
----
+SpatialViews can preserve world scale or map between differently sized views.
+Relevant `SpatialView` settings:
 
-## 2. GrabSpatialTraveller-Script hinzufuegen
-- Fuege dem Objekt das **GrabSpatialTraveller-Script** hinzu.
+- `Mapping Scale Mode`
+- `Custom Mapping Scale`
+- `Scale Traveller Objects`
 
-![](Images/GrabScript.png)
+Manual checks for scale behavior are documented in:
 
-- Achte darauf:
-  - Dem Feld `Graphics Object` muss das entsprechende Objekt zugewiesen sein.
+`Assets/LinkSpace/ScaleMappingManualChecklist.md`
 
-# Steuerung - Meta Quest 3
+## Recursion Rendering
 
-Dieses Projekt ist fuer die Nutzung mit der **Meta Quest 3** ausgelegt.
-Die Eingaben sind fest auf die Controller-Belegung abgestimmt.
+Each SpatialView can render linked views recursively. Important settings:
 
----
+- `Max Recursion Depth`
+- `Recursion Texture Scale`
+- `Near Clip Offset`
+- `Near Clip Limit`
 
-### Bewegung & Ansicht
+Higher recursion depth improves the repeated SpatialView-in-SpatialView effect
+but increases render cost. When testing two facing SpatialViews, use the depth
+high enough to verify recursion, then reduce it if performance becomes a
+problem on device.
 
-| Eingabe | Funktion |
-|--------|----------|
-| Linker Joystick | Spielerbewegung (vorwaerts, rueckwaerts, seitwaerts) |
-| Rechter Joystick links/rechts | Umschauen in festen 45-Grad-Schritten (Snap Turn) |
-| Rechter Joystick nach vorne druecken | Ray-Teleport |
+## Demo Controls
 
-> Das Umschauen erfolgt bewusst ruckartig (Snap Turn), um Motion Sickness zu reduzieren.
+The demo input map is generated from:
 
----
+`Assets/LinkSpace/Demo/Input/ExampleInputActions.inputactions`
 
-### Spatial-View-Interaktionen
+Movement and view:
 
-| Eingabe | Funktion |
-|--------|----------|
-| A-Button | Spatial View platzieren |
-| B-Button | Spatial View zerstoeren |
-| Y-Button | Ausrichtung der Spatial View aendern |
-| Rechter Trigger | Spatial Views linken |
-| Rechter Grip (Grab) | Spatial View greifen und verschieben |
+| Input | Action |
+| --- | --- |
+| Left joystick | Move |
+| Right joystick left/right | Snap turn |
+| Right joystick forward | Ray teleport |
 
----
+SpatialView interaction:
 
-### Objekt-Interaktionen
+| Input | Action |
+| --- | --- |
+| A button | Place SpatialView |
+| B button | Destroy aimed SpatialView |
+| Y button | Toggle placement alignment |
+| Right trigger | Select/link two SpatialViews |
+| Right grip | Grab and move a SpatialView |
 
-| Eingabe | Funktion |
-|--------|----------|
-| X-Button | Wuerfel spawnen |
-| Trigger (bei greifbaren Objekten) | Objekte greifen / halten |
+Object interaction:
 
----
+| Input | Action |
+| --- | --- |
+| X button | Spawn demo cube |
+| Trigger/select on grabbable object | Grab object |
 
-### Hinweise zur Nutzung
+## Editor Utilities
 
-- Spatial Views koennen nach dem Platzieren weiterhin **verschoben** werden (Grip halten).
-- Der Ray-Teleport funktioniert unabhaengig von den Spatial Views und dient zur normalen Fortbewegung.
-- Gespawnte Wuerfel besitzen Traveller-Logik und koennen durch Spatial Views bewegt werden.
+- `Tools -> LinkSpace -> Run Layer Setup`
+- `Tools -> LinkSpace Manager Debugger`
+- Custom inspector for `SpatialView`
+
+## Troubleshooting
+
+- If rays or object transfer do not hit SpatialViews, check that the screen
+  object is on `SpatialViewScreen`.
+- If objects bounce off the screen, check the collision matrix and rerun
+  `Tools -> LinkSpace -> Run Layer Setup`.
+- If transfer happens late, inspect the root `SpatialView` trigger depth. It
+  should be a small tracking volume, not the source of truth for traversal.
+- If recursive rendering is blank or stale, confirm both SpatialViews are linked
+  and the screen renderer uses the `Spatial View Screen` material.
+- If a grabbed cube feels inconsistent after transfer, verify it uses
+  `GrabSpatialTraveller` and the current XR rig prefab with
+  `LinkSpaceNearFarInteractor`.

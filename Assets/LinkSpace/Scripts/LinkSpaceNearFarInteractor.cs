@@ -4,6 +4,7 @@ using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Attachment;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
+using UnityEngine.XR.Interaction.Toolkit.Interactors.Visuals;
 using static SpatialView;
 
 /// <summary>
@@ -18,10 +19,23 @@ public class LinkSpaceNearFarInteractor : NearFarInteractor
     [Tooltip("The spatialView currently hit by the far ray.")]
     public SpatialView currentView;
     private Vector3 currentViewHitPoint; // Hit point on the spatialView plane
+    private CurveVisualController curveVisualController;
+    private LineRenderer curveLineRenderer;
+    private bool curveVisualHiddenForGrabbedTraveller;
+    private bool curveVisualWasEnabled;
 
     #endregion
 
     #region Unity Callbacks
+
+    protected override void Awake()
+    {
+        base.Awake();
+
+        curveVisualController = GetComponent<CurveVisualController>();
+        if (curveVisualController != null)
+            curveLineRenderer = curveVisualController.lineRenderer;
+    }
 
     /// <summary>
     /// Called each frame to update which spatialView the ray is pointing at and handle redirection.
@@ -33,8 +47,33 @@ public class LinkSpaceNearFarInteractor : NearFarInteractor
         if (updatePhase != XRInteractionUpdateOrder.UpdatePhase.Dynamic)
             return;
 
+        UpdateGrabbedTravellerCurveVisualState();
         UpdateCurrentSpatialView();
         RedirectRayThroughCurrentSpatialView();
+    }
+
+    protected override void OnDisable()
+    {
+        RestoreGrabbedTravellerCurveVisual();
+        base.OnDisable();
+    }
+
+    #endregion
+
+    #region Public Methods
+
+    public bool TryGetStableGrabDriverTransform(out Transform driverTransform)
+    {
+        driverTransform = null;
+
+        if (farInteractionCaster != null && farInteractionCaster.castOrigin != null)
+        {
+            driverTransform = farInteractionCaster.castOrigin;
+            return true;
+        }
+
+        driverTransform = attachTransform != null ? attachTransform : transform;
+        return driverTransform != null;
     }
 
     #endregion
@@ -71,6 +110,79 @@ public class LinkSpaceNearFarInteractor : NearFarInteractor
         }
 
         currentView = null;
+    }
+
+    private void UpdateGrabbedTravellerCurveVisualState()
+    {
+        if (TryGetSelectedGrabTraveller(out _))
+        {
+            HideGrabbedTravellerCurveVisual();
+            return;
+        }
+
+        RestoreGrabbedTravellerCurveVisual();
+    }
+
+    private bool TryGetSelectedGrabTraveller(out GrabSpatialTraveller traveller)
+    {
+        traveller = null;
+
+        if (!hasSelection)
+            return false;
+
+        for (int i = 0; i < interactablesSelected.Count; i++)
+        {
+            IXRSelectInteractable interactable = interactablesSelected[i];
+            if (interactable == null || interactable.transform == null)
+                continue;
+
+            traveller = interactable.transform.GetComponent<GrabSpatialTraveller>();
+            if (traveller == null)
+                traveller = interactable.transform.GetComponentInParent<GrabSpatialTraveller>();
+
+            if (traveller != null)
+                return true;
+        }
+
+        traveller = null;
+        return false;
+    }
+
+    private void HideGrabbedTravellerCurveVisual()
+    {
+        if (curveVisualHiddenForGrabbedTraveller)
+            return;
+
+        if (curveVisualController == null)
+            curveVisualController = GetComponent<CurveVisualController>();
+
+        if (curveVisualController == null)
+            return;
+
+        curveVisualHiddenForGrabbedTraveller = true;
+        curveVisualWasEnabled = curveVisualController.enabled;
+
+        if (curveLineRenderer == null)
+            curveLineRenderer = curveVisualController.lineRenderer;
+
+        if (curveLineRenderer != null)
+            curveLineRenderer.enabled = false;
+
+        curveVisualController.enabled = false;
+    }
+
+    private void RestoreGrabbedTravellerCurveVisual()
+    {
+        if (!curveVisualHiddenForGrabbedTraveller)
+            return;
+
+        if (curveLineRenderer != null)
+            curveLineRenderer.enabled = false;
+
+        if (curveVisualController != null)
+            curveVisualController.enabled = curveVisualWasEnabled;
+
+        curveVisualHiddenForGrabbedTraveller = false;
     }
 
     /// <summary>

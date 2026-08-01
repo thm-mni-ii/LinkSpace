@@ -199,8 +199,8 @@ public class SpatialView : MonoBehaviour
     {
         if (isEndpoint) return;
 
-        var traveller = other.GetComponent<SpatialTraveller>();
-        var grabTraveller = other.GetComponent<GrabSpatialTraveller>();
+        SpatialTraveller traveller = GetTraveller(other);
+        GrabSpatialTraveller grabTraveller = traveller as GrabSpatialTraveller;
 
         if (grabTraveller)
         {
@@ -215,7 +215,7 @@ public class SpatialView : MonoBehaviour
     {
         if (isEndpoint) return;
 
-        var traveller = other.GetComponent<SpatialTraveller>();
+        SpatialTraveller traveller = GetTraveller(other);
 
         if (traveller && trackedTravellers.Contains(traveller))
         {
@@ -286,6 +286,11 @@ public class SpatialView : MonoBehaviour
     public void OnTravellerEnterView(SpatialTraveller traveller)
     {
         OnTravellerEnterView(traveller, false);
+    }
+
+    public void OnTravellerTeleportedIntoView(SpatialTraveller traveller)
+    {
+        OnTravellerEnterView(traveller, true);
     }
 
     private void OnTravellerEnterView(SpatialTraveller traveller, bool resetPreviousPosition)
@@ -469,6 +474,15 @@ public class SpatialView : MonoBehaviour
         return Mathf.Abs(localPoint.x) <= halfSize.x + tolerance
             && Mathf.Abs(localPoint.y) <= halfSize.y + tolerance
             && Mathf.Abs(localPoint.z) <= halfSize.z + tolerance;
+    }
+
+    private SpatialTraveller GetTraveller(Collider other)
+    {
+        if (other == null)
+            return null;
+
+        SpatialTraveller traveller = other.GetComponent<SpatialTraveller>();
+        return traveller != null ? traveller : other.GetComponentInParent<SpatialTraveller>();
     }
 
     /// <summary>
