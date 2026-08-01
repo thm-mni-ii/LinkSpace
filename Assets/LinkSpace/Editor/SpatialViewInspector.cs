@@ -28,6 +28,7 @@ public class SpatialViewInspector : Editor
 
     private SerializedProperty nearClipOffset;
     private SerializedProperty nearClipLimit;
+    private SerializedProperty screenTeleportMargin;
 
     // Foldout states
     private bool foldMain = true;
@@ -73,6 +74,7 @@ public class SpatialViewInspector : Editor
         // Advanced
         nearClipOffset = serializedObject.FindProperty("nearClipOffset");
         nearClipLimit = serializedObject.FindProperty("nearClipLimit");
+        screenTeleportMargin = serializedObject.FindProperty("screenTeleportMargin");
     }
 
     public override void OnInspectorGUI()
@@ -203,6 +205,7 @@ public class SpatialViewInspector : Editor
         {
             EditorGUILayout.PropertyField(nearClipOffset);
             EditorGUILayout.PropertyField(nearClipLimit);
+            EditorGUILayout.PropertyField(screenTeleportMargin);
         }
         EditorGUILayout.EndFoldoutHeaderGroup();
         EditorGUILayout.Space();

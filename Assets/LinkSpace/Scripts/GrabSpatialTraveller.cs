@@ -196,8 +196,7 @@ public class GrabSpatialTraveller : SpatialTraveller
     /// </summary>
     private bool TraveledThroughScreen()
     {
-        return !fromView.SameSideOfView(transform.position, lastPos) &&
-               fromView.enterCollider.ClosestPoint(transform.position) == transform.position;
+        return fromView != null && fromView.DidCrossVisibleScreen(lastPos, transform.position);
     }
 
     /// <summary>

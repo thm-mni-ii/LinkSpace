@@ -73,11 +73,17 @@ public class SpatialView : MonoBehaviour
     [Tooltip("Maximum allowed near clip distance.")]
     public float nearClipLimit = 0.2f;
 
+    [Tooltip("World-space margin around the visible screen that still counts as a valid walk-through crossing.")]
+    [Min(0f)]
+    public float screenTeleportMargin = 0.05f;
+
     #endregion
 
     #region Private Variables
 
     private const int RecursionTextureBufferCount = 2;
+    private const float PlaneCrossingEpsilon = 0.0001f;
+    private static readonly Quaternion PortalHalfTurn = Quaternion.Euler(0f, 180f, 0f);
     private static readonly int LeftEyeTexId = Shader.PropertyToID("_LeftEyeTex");
     private static readonly int RightEyeTexId = Shader.PropertyToID("_RightEyeTex");
     private static readonly int DisplayMaskId = Shader.PropertyToID("displayMask");
@@ -85,6 +91,7 @@ public class SpatialView : MonoBehaviour
     private Camera viewCam;
     private Camera playerCam;
     private List<SpatialTraveller> trackedTravellers;
+    private readonly Dictionary<SpatialTraveller, Vector3> travellerPreviousPositions = new Dictionary<SpatialTraveller, Vector3>();
     private MeshFilter screenMeshFilter;
     private RenderTexture[] viewTexturesLeft;
     private RenderTexture[] viewTexturesRight;
@@ -179,6 +186,7 @@ public class SpatialView : MonoBehaviour
     {
         maxRecursionDepth = Mathf.Max(1, maxRecursionDepth);
         recursionTextureScale = Mathf.Clamp(recursionTextureScale, 0.25f, 1f);
+        screenTeleportMargin = Mathf.Max(0f, screenTeleportMargin);
         if (linkedView != null) linkedView.linkedView = this;
         BoxCollider box = GetComponent<BoxCollider>();
         box.isTrigger = true;
@@ -277,14 +285,28 @@ public class SpatialView : MonoBehaviour
     /// </summary>
     public void OnTravellerEnterView(SpatialTraveller traveller)
     {
-        if (isEndpoint) return;
+        OnTravellerEnterView(traveller, false);
+    }
+
+    private void OnTravellerEnterView(SpatialTraveller traveller, bool resetPreviousPosition)
+    {
+        if (isEndpoint || traveller == null || trackedTravellers == null) return;
+
+        Vector3 currentPosition = traveller.GetPosition();
 
         if (!trackedTravellers.Contains(traveller))
         {
             traveller.EnterSpatialViewThreshold(this);
-            traveller.previousPosition = traveller.GetPosition();
             trackedTravellers.Add(traveller);
+            resetPreviousPosition = true;
         }
+        else if (resetPreviousPosition)
+        {
+            traveller.EnterSpatialViewThreshold(this);
+        }
+
+        if (resetPreviousPosition)
+            SetTravellerPreviousPosition(traveller, currentPosition);
     }
     /// <summary>
     /// Releases a traveller from spatialView tracking.
@@ -292,10 +314,11 @@ public class SpatialView : MonoBehaviour
     /// </summary>
     public void ReleaseTraveller(SpatialTraveller traveller)
     {
-        if (isEndpoint) return;
+        if (isEndpoint || traveller == null) return;
 
         traveller.ExitSpatialViewThreshold();
         trackedTravellers.Remove(traveller);
+        travellerPreviousPositions.Remove(traveller);
     }
 
     #endregion
@@ -329,36 +352,48 @@ public class SpatialView : MonoBehaviour
     /// </summary>
     private void HandleTravellerTeleportation()
     {
-        if (linkedView == null || isEndpoint || travelMode == ObjectTravelMode.None) return;
+        if (linkedView == null || isEndpoint || travelMode == ObjectTravelMode.None)
+        {
+            prevViewPos = transform.position;
+            prevViewRot = transform.rotation;
+            return;
+        }
+
+        Matrix4x4 prevSpatialViewMatrix = Matrix4x4.TRS(prevViewPos, prevViewRot, Vector3.one);
+        Matrix4x4 prevSpatialViewInv = prevSpatialViewMatrix.inverse;
 
         for (int i = 0; i < trackedTravellers.Count; i++)
         {
             SpatialTraveller traveller = trackedTravellers[i];
+
+            if (traveller == null)
+            {
+                trackedTravellers.RemoveAt(i);
+                i--;
+                continue;
+            }
+
             PlayerSpatialTraveller playerTraveller = traveller as PlayerSpatialTraveller;
-
-            Vector3 localPos = transform.InverseTransformPoint(traveller.GetPosition());
-
-            Matrix4x4 prevSpatialViewMatrix = Matrix4x4.TRS(prevViewPos, prevViewRot, Vector3.one);
-            Matrix4x4 prevSpatialViewInv = prevSpatialViewMatrix.inverse;
-
-            Vector3 localPrevPos = prevSpatialViewInv.MultiplyPoint3x4(traveller.previousPosition);
-
-            int viewSide = Math.Sign(localPos.z);
-            int viewSideOld = Math.Sign(localPrevPos.z);
+            Vector3 currentPosition = traveller.GetPosition();
 
             GrabSpatialTraveller grabTraveller = traveller as GrabSpatialTraveller;
 
             if (grabTraveller == null || (grabTraveller != null && !grabTraveller.IsGrabbed()))
             {
-                if (playerTraveller && !walkable) return;
+                if (playerTraveller && !walkable)
+                {
+                    SetTravellerPreviousPosition(traveller, currentPosition);
+                    continue;
+                }
 
-                if (viewSide != viewSideOld)
+                if (travellerPreviousPositions.TryGetValue(traveller, out Vector3 previousPosition) &&
+                    TryGetScreenCrossing(previousPosition, currentPosition, prevSpatialViewInv, out int sourceExitSide, out _))
                 {
                     Transform travellerT = traveller.transform;
                     Vector3 positionOld = travellerT.position;
                     Quaternion rotationOld = travellerT.rotation;
 
-                    Vector3 newPosition = MapPointToLinkedView(traveller.GetPosition());
+                    Vector3 newPosition = MapPointToLinkedView(currentPosition);
                     Quaternion mappedRotation = playerTraveller == null
                         ? MapRotationToLinkedView(travellerT.rotation)
                         : MapRotationToLinkedView(playerTraveller.GetTeleportOriginRotation());
@@ -366,7 +401,8 @@ public class SpatialView : MonoBehaviour
                         ? mappedRotation
                         : Quaternion.Euler(rotationOld.eulerAngles.x, mappedRotation.eulerAngles.y, rotationOld.eulerAngles.z);
 
-                    Vector3 tpOffset = playerTraveller ? linkedView.transform.forward * teleportationOffset * viewSide : Vector3.zero;
+                    int targetExitSide = -sourceExitSide;
+                    Vector3 tpOffset = playerTraveller ? linkedView.transform.forward * teleportationOffset * targetExitSide : Vector3.zero;
 
                     traveller.Teleport(newPosition + tpOffset, newRotation);
 
@@ -379,17 +415,18 @@ public class SpatialView : MonoBehaviour
                         traveller.graphicsClone.transform.SetPositionAndRotation(positionOld, rotationOld);
 
                     ReleaseTraveller(traveller);
-                    linkedView.OnTravellerEnterView(traveller);
+                    linkedView.OnTravellerEnterView(traveller, true);
 
                     i--;
                     continue;
                 }
             }
 
-            traveller.previousPosition = traveller.GetPosition();
-            prevViewPos = transform.position;
-            prevViewRot = transform.rotation;
+            SetTravellerPreviousPosition(traveller, currentPosition);
         }
+
+        prevViewPos = transform.position;
+        prevViewRot = transform.rotation;
     }
 
     /// <summary>
@@ -428,6 +465,170 @@ public class SpatialView : MonoBehaviour
         return Mathf.Abs(localPoint.x) <= halfSize.x + tolerance
             && Mathf.Abs(localPoint.y) <= halfSize.y + tolerance
             && Mathf.Abs(localPoint.z) <= halfSize.z + tolerance;
+    }
+
+    /// <summary>
+    /// Checks whether the movement segment crosses the visible screen surface.
+    /// </summary>
+    public bool DidCrossVisibleScreen(Vector3 previousWorldPosition, Vector3 currentWorldPosition)
+    {
+        return TryGetScreenCrossing(
+            previousWorldPosition,
+            currentWorldPosition,
+            transform.worldToLocalMatrix,
+            out _,
+            out _);
+    }
+
+    /// <summary>
+    /// Stores previous traveller positions per spatialView so overlapping triggers cannot corrupt crossing state.
+    /// </summary>
+    private void SetTravellerPreviousPosition(SpatialTraveller traveller, Vector3 position)
+    {
+        traveller.previousPosition = position;
+        travellerPreviousPositions[traveller] = position;
+    }
+
+    /// <summary>
+    /// Finds a valid crossing through this spatialView's visible screen, not just its broad trigger volume.
+    /// </summary>
+    private bool TryGetScreenCrossing(
+        Vector3 previousWorldPosition,
+        Vector3 currentWorldPosition,
+        Matrix4x4 previousViewInv,
+        out int sourceExitSide,
+        out Vector3 crossingWorldPosition)
+    {
+        sourceExitSide = 0;
+        crossingWorldPosition = currentWorldPosition;
+
+        Vector3 previousLocalPosition = previousViewInv.MultiplyPoint3x4(previousWorldPosition);
+        Vector3 currentLocalPosition = transform.InverseTransformPoint(currentWorldPosition);
+
+        if (!TryGetPlaneExitSide(previousLocalPosition.z, currentLocalPosition.z, out sourceExitSide))
+            return false;
+
+        crossingWorldPosition = GetPlaneCrossingPoint(
+            previousWorldPosition,
+            currentWorldPosition,
+            previousLocalPosition.z,
+            currentLocalPosition.z);
+
+        return IsPointInsideScreenBounds(crossingWorldPosition);
+    }
+
+    /// <summary>
+    /// Returns the side reached after crossing the source portal plane.
+    /// </summary>
+    private bool TryGetPlaneExitSide(float previousLocalZ, float currentLocalZ, out int sourceExitSide)
+    {
+        sourceExitSide = 0;
+
+        if (previousLocalZ > PlaneCrossingEpsilon && currentLocalZ <= PlaneCrossingEpsilon)
+        {
+            sourceExitSide = -1;
+            return true;
+        }
+
+        if (previousLocalZ < -PlaneCrossingEpsilon && currentLocalZ >= -PlaneCrossingEpsilon)
+        {
+            sourceExitSide = 1;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Interpolates the movement segment to the point where it crosses the spatialView plane.
+    /// </summary>
+    private Vector3 GetPlaneCrossingPoint(
+        Vector3 previousWorldPosition,
+        Vector3 currentWorldPosition,
+        float previousLocalZ,
+        float currentLocalZ)
+    {
+        float denominator = previousLocalZ - currentLocalZ;
+
+        if (Mathf.Abs(denominator) <= PlaneCrossingEpsilon)
+            return currentWorldPosition;
+
+        float t = Mathf.Clamp01(previousLocalZ / denominator);
+        return Vector3.Lerp(previousWorldPosition, currentWorldPosition, t);
+    }
+
+    /// <summary>
+    /// Checks the two largest local axes of the screen bounds so thin BoxColliders can be used as screens.
+    /// </summary>
+    private bool IsPointInsideScreenBounds(Vector3 worldPoint)
+    {
+        if (screen == null)
+            return false;
+
+        BoxCollider screenBox = screen.GetComponent<BoxCollider>();
+        if (screenBox != null)
+            return IsPointInsideLocalSurfaceBounds(worldPoint, screenBox.transform, screenBox.center, screenBox.size);
+
+        Renderer renderer = screen.meshRenderer;
+        if (renderer != null)
+            return IsPointInsideLocalSurfaceBounds(worldPoint, renderer.transform, renderer.localBounds.center, renderer.localBounds.size);
+
+        MeshFilter meshFilter = screen.GetComponent<MeshFilter>();
+        if (meshFilter != null && meshFilter.sharedMesh != null)
+            return IsPointInsideLocalSurfaceBounds(worldPoint, meshFilter.transform, meshFilter.sharedMesh.bounds.center, meshFilter.sharedMesh.bounds.size);
+
+        return false;
+    }
+
+    private bool IsPointInsideLocalSurfaceBounds(Vector3 worldPoint, Transform boundsTransform, Vector3 localCenter, Vector3 localSize)
+    {
+        Vector3 localPoint = boundsTransform.InverseTransformPoint(worldPoint) - localCenter;
+        Vector3 halfSize = localSize * 0.5f;
+        Vector3 worldSize = new Vector3(
+            Mathf.Abs(localSize.x * boundsTransform.lossyScale.x),
+            Mathf.Abs(localSize.y * boundsTransform.lossyScale.y),
+            Mathf.Abs(localSize.z * boundsTransform.lossyScale.z));
+        int thicknessAxis = SmallestAxis(worldSize);
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (axis == thicknessAxis)
+                continue;
+
+            float margin = WorldMarginToLocalAxis(boundsTransform, axis);
+            if (Mathf.Abs(GetAxis(localPoint, axis)) > GetAxis(halfSize, axis) + margin)
+                return false;
+        }
+
+        return true;
+    }
+
+    private float WorldMarginToLocalAxis(Transform targetTransform, int axis)
+    {
+        Vector3 localAxis = axis == 0 ? Vector3.right : axis == 1 ? Vector3.up : Vector3.forward;
+        float worldAxisLength = targetTransform.TransformVector(localAxis).magnitude;
+        return worldAxisLength > Mathf.Epsilon ? screenTeleportMargin / worldAxisLength : screenTeleportMargin;
+    }
+
+    private static int SmallestAxis(Vector3 size)
+    {
+        if (size.x <= size.y && size.x <= size.z)
+            return 0;
+
+        return size.y <= size.z ? 1 : 2;
+    }
+
+    private static float GetAxis(Vector3 value, int axis)
+    {
+        switch (axis)
+        {
+            case 0:
+                return value.x;
+            case 1:
+                return value.y;
+            default:
+                return value.z;
+        }
     }
 
     #endregion
@@ -895,7 +1096,18 @@ public class SpatialView : MonoBehaviour
     /// <summary>
     /// Returns the side of the spatialView for a given position (front or back).
     /// </summary>
-    int SideOfView(Vector3 pos) => Math.Sign(Vector3.Dot(pos - transform.position, transform.forward));
+    int SideOfView(Vector3 pos)
+    {
+        float side = Vector3.Dot(pos - transform.position, transform.forward);
+
+        if (side > PlaneCrossingEpsilon)
+            return 1;
+
+        if (side < -PlaneCrossingEpsilon)
+            return -1;
+
+        return 0;
+    }
     /// <summary>
     /// Checks if two positions are on the same side of the spatialView.
     /// </summary>
@@ -936,7 +1148,8 @@ public class SpatialView : MonoBehaviour
             return worldPoint;
 
         Vector3 localPoint = Quaternion.Inverse(transform.rotation) * (worldPoint - transform.position);
-        return targetView.transform.position + targetView.transform.rotation * (localPoint * GetMappingScaleTo(targetView));
+        Vector3 mappedLocalPoint = PortalHalfTurn * (localPoint * GetMappingScaleTo(targetView));
+        return targetView.transform.position + targetView.transform.rotation * mappedLocalPoint;
     }
 
     public Vector3 MapLinkedPointToSource(Vector3 linkedWorldPoint)
@@ -946,7 +1159,8 @@ public class SpatialView : MonoBehaviour
 
         float scale = GetMappingScaleTo(linkedView);
         Vector3 linkedLocalPoint = Quaternion.Inverse(linkedView.transform.rotation) * (linkedWorldPoint - linkedView.transform.position);
-        return transform.position + transform.rotation * (linkedLocalPoint / Mathf.Max(0.0001f, scale));
+        Vector3 sourceLocalPoint = PortalHalfTurn * linkedLocalPoint;
+        return transform.position + transform.rotation * (sourceLocalPoint / Mathf.Max(0.0001f, scale));
     }
 
     public Quaternion MapRotationToLinkedView(Quaternion worldRotation)
@@ -960,7 +1174,7 @@ public class SpatialView : MonoBehaviour
             return worldRotation;
 
         Quaternion localRotation = Quaternion.Inverse(transform.rotation) * worldRotation;
-        return targetView.transform.rotation * localRotation;
+        return targetView.transform.rotation * PortalHalfTurn * localRotation;
     }
 
     public Vector3 MapDirectionToLinkedView(Vector3 worldDirection)
@@ -974,7 +1188,7 @@ public class SpatialView : MonoBehaviour
             return worldDirection.normalized;
 
         Vector3 localDirection = Quaternion.Inverse(transform.rotation) * worldDirection;
-        return (targetView.transform.rotation * localDirection).normalized;
+        return (targetView.transform.rotation * (PortalHalfTurn * localDirection)).normalized;
     }
 
     public Vector3 MapLinearVelocityTo(SpatialView targetView, Vector3 velocity)
@@ -983,7 +1197,7 @@ public class SpatialView : MonoBehaviour
             return velocity;
 
         Vector3 localVelocity = Quaternion.Inverse(transform.rotation) * velocity;
-        return targetView.transform.rotation * (localVelocity * GetMappingScaleTo(targetView));
+        return targetView.transform.rotation * (PortalHalfTurn * (localVelocity * GetMappingScaleTo(targetView)));
     }
 
     public Vector3 MapAngularVelocityTo(SpatialView targetView, Vector3 angularVelocity)
@@ -992,7 +1206,7 @@ public class SpatialView : MonoBehaviour
             return angularVelocity;
 
         Vector3 localAngularVelocity = Quaternion.Inverse(transform.rotation) * angularVelocity;
-        return targetView.transform.rotation * localAngularVelocity;
+        return targetView.transform.rotation * (PortalHalfTurn * localAngularVelocity);
     }
 
     private float GetUniformPortalSize()

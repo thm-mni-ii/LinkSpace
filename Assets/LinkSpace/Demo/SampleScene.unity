@@ -583,7 +583,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8135023674665499069, guid: 58d0a4ac86f2348deb02f3880c71378e, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8518324294302271954, guid: 58d0a4ac86f2348deb02f3880c71378e, type: 3}
       propertyPath: m_LocalPosition.x
@@ -1642,6 +1642,9 @@ MonoBehaviour:
   linkedView: {fileID: 0}
   teleportationOffset: 0.01
   isEndpoint: 0
+  mappingScaleMode: 0
+  customMappingScale: 1
+  scaleTravellerObjects: 1
   useMeshAsScreen: 1
   screen: {fileID: 814101471}
   screenMaterial: {fileID: 0}
@@ -1651,8 +1654,11 @@ MonoBehaviour:
   onObjectTravel:
     m_PersistentCalls:
       m_Calls: []
+  maxRecursionDepth: 3
+  recursionTextureScale: 1
   nearClipOffset: 0.2
   nearClipLimit: 0.5
+  screenTeleportMargin: 0.05
   enterCollider: {fileID: 0}
 --- !u!4 &680629610
 Transform:
@@ -2565,6 +2571,10 @@ PrefabInstance:
     - target: {fileID: 2477710146306001255, guid: d7daadc5a61248e48b3154f71ea9983c, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3283779486970452143, guid: d7daadc5a61248e48b3154f71ea9983c, type: 3}
+      propertyPath: m_Enabled
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 3853473238440364448, guid: d7daadc5a61248e48b3154f71ea9983c, type: 3}
       propertyPath: m_Name
