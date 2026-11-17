@@ -11,9 +11,8 @@ SpatialTraveller, and LinkSpace.
 
 Additional information about LinkSpace and an empirical evaluation can be found in the [VRST 2026 publication](https://dl.acm.org/doi/10.1145/3822517.3848674). Please cite the paper if you use the toolkit:
 
-```
-Kevin Linne, Kilian Reiner Stock, Christin Katharina Kreutz, Jan Gugenheimer, and Martin Weigel. 2026. LinkSpace: A Toolkit for Linked Spatial Views in Virtual Reality. In Proceedings of the 32nd ACM Symposium on Virtual Reality Software and Technology (VRST '26). Association for Computing Machinery, New York, NY, USA, Article 34, 1–10. https://doi.org/10.1145/3822517.3848674
-```
+> Kevin Linne, Kilian Reiner Stock, Christin Katharina Kreutz, Jan Gugenheimer, and Martin Weigel. 2026. LinkSpace: A Toolkit for Linked Spatial Views in Virtual Reality. In Proceedings of the 32nd ACM Symposium on Virtual Reality Software and Technology (VRST '26). Association for Computing Machinery, New York, NY, USA, Article 34, 1–10. https://doi.org/10.1145/3822517.3848674
+
 
 ## Current Setup
 
